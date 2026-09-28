@@ -6,7 +6,7 @@ minimized. Maps each step to the matching ``jewam_step_<N>_object.ckpt`` on
 disk.
 
 Usage:
-    python pick_best_ckpt.py --ckpt-dir checkpoints/full_seed3072 --top-k 1
+    python -m scripts.eval.pick_best_ckpt --ckpt-dir checkpoints/full_seed3072 --top-k 1
 
 Output (JSON to stdout):
     {

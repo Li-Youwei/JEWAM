@@ -10,7 +10,7 @@ The intent is to catch sampler weight bugs (e.g., wrong dict keys, missing
 demos) before starting training.
 
 Usage:
-    python verify_sampler_balance.py \\
+    python -m scripts.diagnostics.verify_sampler_balance \\
         --hdf5-dir data/libero_processed/all4_flat \\
         --num-epochs 1
 """
@@ -27,7 +27,7 @@ import numpy as np
 import torch
 from torch.utils.data import WeightedRandomSampler
 
-from libero_dataset import LiberoDataset
+from jewam.data.libero import LiberoDataset
 
 logger = logging.getLogger("verify_sampler_balance")
 

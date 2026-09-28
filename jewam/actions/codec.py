@@ -81,7 +81,7 @@ class FastActionCodec(ActionCodec):
         time_horizon: int,
         action_dim: int,
     ) -> np.ndarray:
-        from fast_utils import fast_decode
+        from jewam.actions.fast import fast_decode
 
         return fast_decode(
             token_ids,

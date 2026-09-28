@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class ModelObjectCallBack(Callback):
-    """Pickle the model object on disk for downstream eval_libero.py loading.
+    """Pickle the model object on disk for downstream LIBERO evaluation.
 
     Two modes:
       - **Per-epoch (legacy)**: fires on_train_epoch_end every ``epoch_interval``
@@ -19,8 +19,8 @@ class ModelObjectCallBack(Callback):
         checkpoint; a positive value keeps only that many checkpoints ranked
         by ``validate/ce_loss_taskbal``.
 
-    `_object.ckpt` filename is required by eval_libero.py for SP / BN-projector
-    architectures (state_dict mode rejects those — see eval_libero.py:131-145).
+    `_object.ckpt` filename is required by the LIBERO evaluator for SP /
+    BN-projector architectures (state_dict mode rejects those).
     """
 
     def __init__(
@@ -156,7 +156,7 @@ class TaskBalancedCEMetric(Callback):
     in the validation set. Here we aggregate those (each task weighted equally)
     so the saved scalar is robust to suite size imbalance — critical under
     4-suite joint training where some tasks have ~3× more val samples than
-    others. Used by `pick_best_ckpt.py` for ckpt selection.
+    others. Used by `scripts/eval/pick_best_ckpt.py` for ckpt selection.
     """
 
     def on_validation_epoch_end(self, trainer, pl_module):
@@ -197,7 +197,7 @@ class PeriodicPrintCallback(Callback):
     Args:
         every_n_epochs: print cadence in epochs.
         keys: metric keys to print. Missing keys are silently skipped. The
-              default matches the keys logged by `jewam_forward` in train.py.
+              default matches the keys logged by `jewam_forward` in jewam.training.train.
         tag: short prefix shown at the start of each line.
     """
 

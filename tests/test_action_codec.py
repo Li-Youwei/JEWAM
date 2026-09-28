@@ -7,9 +7,9 @@ import unittest
 import numpy as np
 import torch
 
-import action_codec
-from action_codec import WorldVLABinActionCodec, build_action_codec
-from module import ARPredictor
+from jewam.actions import codec as action_codec
+from jewam.actions.codec import WorldVLABinActionCodec, build_action_codec
+from jewam.models.transformer import ARPredictor
 
 
 class WorldVLABinActionCodecTest(unittest.TestCase):

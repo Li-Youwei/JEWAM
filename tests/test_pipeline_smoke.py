@@ -20,15 +20,15 @@ from scipy.spatial.transform import Rotation
 from torch import nn
 from torch.utils.data import DataLoader
 
-from jepa import JEPA
-from libero_dataset import LiberoDataset
-from module import MLP, ARPredictor, SIGReg
-from preprocess_libero import (
+from jewam.data.libero import LiberoDataset
+from jewam.data.preprocessing import (
     compute_action_stats,
     extract_chunks,
     normalize_actions,
     save_hdf5,
 )
+from jewam.models.policy import JEPA
+from jewam.models.transformer import MLP, ARPredictor, SIGReg
 
 
 class TinyVisionEncoder(nn.Module):
@@ -121,7 +121,7 @@ class PipelineSmokeTest(unittest.TestCase):
                 language_source="synthetic",
             )
         with patch(
-            "libero_dataset.T5Tokenizer.from_pretrained", return_value=TinyTokenizer()
+            "jewam.data.libero.T5Tokenizer.from_pretrained", return_value=TinyTokenizer()
         ):
             self.dataset = LiberoDataset(
                 str(processed),
@@ -249,7 +249,7 @@ class PipelineSmokeTest(unittest.TestCase):
 
     def test_production_joint_loss_backpropagates_with_frozen_encoders(self):
         try:
-            from train import jewam_forward
+            from jewam.training.train import jewam_forward
         except ModuleNotFoundError as exc:
             if exc.name in {"hydra", "omegaconf"}:
                 self.skipTest(f"Training loss smoke requires hydra-core: {exc}")

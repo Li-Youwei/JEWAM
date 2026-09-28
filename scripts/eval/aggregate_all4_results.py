@@ -7,7 +7,7 @@ file). Requires all ten tasks in every suite; incomplete runs are rejected.
 Without --checkpoint-stem, reads legacy ``eval_<suite>.log`` names.
 
 Usage:
-    python aggregate_all4_results.py \\
+    python -m scripts.eval.aggregate_all4_results \\
         --ckpt-dir checkpoints/full_seed3072 \\
         --checkpoint-stem jewam_step_100000_object \\
         --out checkpoints/full_seed3072/results.md

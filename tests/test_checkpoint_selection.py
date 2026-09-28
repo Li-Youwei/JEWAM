@@ -16,7 +16,7 @@ if HAS_TENSORBOARD:
     from tensorboard.compat.proto.summary_pb2 import Summary
     from tensorboard.summary.writer.event_file_writer import EventFileWriter
 
-    from pick_best_ckpt import find_ckpt_for_step, find_event_files
+    from scripts.eval.pick_best_ckpt import find_ckpt_for_step, find_event_files
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -72,9 +72,9 @@ class CheckpointSelectionTest(unittest.TestCase):
                 for step in (4000, 8000):
                     (root / f"{prefix}_step_{step}_object.ckpt").touch()
                 result = subprocess.run(
-                    [sys.executable, "-B", str(ROOT / "pick_best_ckpt.py"),
+                    [sys.executable, "-B", "-m", "scripts.eval.pick_best_ckpt",
                      "--ckpt-dir", str(root), "--top-k", "2"],
-                    capture_output=True, text=True, check=True,
+                    cwd=ROOT, capture_output=True, text=True, check=True,
                 )
                 selected = json.loads(result.stdout)
                 self.assertEqual(selected["top_1"], str(root / f"{prefix}_step_8000_object.ckpt"))

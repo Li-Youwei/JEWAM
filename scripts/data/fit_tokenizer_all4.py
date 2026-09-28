@@ -3,7 +3,7 @@
 Each task's action chunks are normalized to [-1, 1] using that task's own
 (action_low, action_high) percentile bounds. The 40 per-task-normalized chunk
 arrays are then concatenated and used to fit a single shared BPE vocabulary. Downstream
-preprocessing (preprocess_libero.py --load-tokenizer ...) reuses this fitted tokenizer
+preprocessing (python -m scripts.data.preprocess_libero --load-tokenizer ...) reuses this fitted tokenizer
 while each per-task .h5 keeps its own (low, high) attrs.
 
 Output:
@@ -14,7 +14,7 @@ Output:
 The raw LIBERO HDF5 directory (data/libero_raw by default) is read-only.
 
 Usage:
-    python fit_tokenizer_all4.py --chunk-size 20 --stride 1
+    python -m scripts.data.fit_tokenizer_all4 --chunk-size 20 --stride 1
 """
 
 from __future__ import annotations
@@ -30,12 +30,13 @@ import h5py
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from preprocess_libero import (
+from jewam.data.preprocessing import (
     compute_action_stats,
     load_demo_keys,
     normalize_actions,
     tokenize_actions,
 )
+from jewam.paths import REPO_ROOT
 
 SUITES: tuple[str, ...] = (
     "libero_spatial",
@@ -45,7 +46,6 @@ SUITES: tuple[str, ...] = (
 )
 
 logger = logging.getLogger("fit_tokenizer_all4")
-REPO_ROOT = Path(__file__).resolve().parent
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +296,7 @@ def main() -> None:
     if recommended > args.current_max_action_tokens:
         logger.warning(
             "max_action_tokens MUST be bumped to %d in config/train/data/libero.yaml AND "
-            "scripts/preprocess_all4.sh — otherwise preprocess_libero.py will assert-fail.",
+            "scripts/preprocess_all4.sh — otherwise scripts/data/preprocess_libero.py will assert-fail.",
             recommended,
         )
 

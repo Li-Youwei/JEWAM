@@ -4,7 +4,7 @@ import unittest
 
 import torch
 
-from module import PAD_TOKEN_ID, ARPredictor
+from jewam.models.transformer import PAD_TOKEN_ID, ARPredictor
 
 
 class AttentionMaskTest(unittest.TestCase):

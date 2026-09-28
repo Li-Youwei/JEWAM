@@ -12,7 +12,7 @@ from torch import nn
 class ObjectCheckpointCallbackTest(unittest.TestCase):
     def setUp(self):
         try:
-            from utils import ModelObjectCallBack
+            from jewam.training.callbacks import ModelObjectCallBack
         except ModuleNotFoundError as exc:
             if exc.name == "lightning":
                 self.skipTest(

@@ -1,3 +1,80 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jewam"
+version = "0.1.0"
+description = "Joint-Embedding World Action Model for robot manipulation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = [
+    "torch>=2.1,<3",
+    "einops>=0.7",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "h5py>=3.8",
+    # Keep the FAST/T5 processor API on Transformers 4.x.
+    "transformers>=4.48,<5",
+    "sentencepiece>=0.1.99",
+    "tiktoken>=0.7",
+    "tokenizers>=0.15",
+    "hydra-core>=1.3,<1.4",
+    "omegaconf>=2.3,<2.4",
+]
+
+[project.optional-dependencies]
+train = [
+    # Later releases change the Manager checkpoint output/resume API.
+    "stable-pretraining==0.1.6",
+    "lightning>=2.4,<3",
+    "tensorboard>=2.12",
+]
+eval = [
+    # LIBERO's legacy init-state loader predates torch.load(weights_only=True).
+    "torch>=2.1,<2.6",
+    "torchvision>=0.16,<0.21",
+    "numpy>=1.24,<2",
+    # Match LIBERO's classic OSC_POSE controller/environment API.
+    "robosuite==1.4.0",
+    "bddl==1.0.1",
+    "gym==0.25.2",
+    "mujoco>=2.3,<3",
+    "opencv-python>=4.6,<4.12",
+    "easydict>=1.9",
+    "future>=0.18.2",
+    "cloudpickle>=2.1",
+    "matplotlib>=3.5",
+    "imageio[ffmpeg]>=2.31",
+]
+dev = ["ruff>=0.9,<1"]
+
+[tool.setuptools]
+packages = [
+    "jewam",
+    "jewam.actions",
+    "jewam.data",
+    "jewam.evaluation",
+    "jewam.models",
+    "jewam.training",
+    "jewam.config",
+    "scripts",
+    "scripts.data",
+    "scripts.diagnostics",
+    "scripts.eval",
+]
+py-modules = ["jepa", "module", "vision_backbone"]
+include-package-data = false
+
+[tool.setuptools.package-dir]
+"jewam.config" = "config"
+
+[tool.setuptools.package-data]
+"jewam.config" = ["train/*.yaml", "train/data/*.yaml"]
+scripts = ["*.sh"]
+
 [tool.ruff]
 target-version = "py310"
 extend-exclude = ["third_party"]

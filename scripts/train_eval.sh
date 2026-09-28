@@ -313,7 +313,7 @@ fi
 if [[ "$EVAL_ONLY" == "true" || "$EVAL_ONLY" == "1" ]]; then
     echo "[JEWAM] EVAL_ONLY enabled; skipping training and using existing checkpoints in $CKPT_DIR"
 else
-    "$PYTHON" train.py --config-name=base \
+    "$PYTHON" -m jewam.training.train --config-name=base \
         data=libero \
         data.dataset.hdf5_dir="$FLAT_DIR" \
         data.dataset.max_action_tokens="$MAX_ACTION_TOKENS" \
@@ -372,7 +372,7 @@ if [[ "$FULL_DATA" == "true" ]]; then
     echo "[JEWAM] full-data run: evaluating the final step, without validation selection"
 else
 PICK_JSON="${CKPT_DIR}/ckpt_ce_topk.json"
-PICK_OUT=$("$PYTHON" pick_best_ckpt.py --ckpt-dir "$CKPT_DIR" --top-k "$CKPT_SELECT_TOP_K")
+PICK_OUT=$("$PYTHON" -m scripts.eval.pick_best_ckpt --ckpt-dir "$CKPT_DIR" --top-k "$CKPT_SELECT_TOP_K")
 echo "[JEWAM] pick_best_ckpt output:"
 echo "$PICK_OUT"
 echo "$PICK_OUT" > "$PICK_JSON"
@@ -413,7 +413,7 @@ for candidate_ckpt in "${CANDIDATE_CKPTS[@]}"; do
         PROC_DIR="${PROCESSED_ROOT}/${suite}"
         [[ -d "$PROC_DIR" ]] || { echo "ERROR: processed suite dir missing: $PROC_DIR" >&2; exit 1; }
         echo "[JEWAM] eval $suite episodes_per_task=$FINAL_EVAL_EPISODES max_steps=$suite_max_steps -> $EVAL_LOG"
-        "$PYTHON" eval_libero.py \
+        "$PYTHON" -m jewam.evaluation.libero \
             --checkpoint "$candidate_ckpt" \
             --processed-dir "$PROC_DIR" \
             --suite "$suite" \

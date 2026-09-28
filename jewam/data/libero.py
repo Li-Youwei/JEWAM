@@ -1,6 +1,6 @@
 """LIBERO dataset for VLA baseline training.
 
-Loads preprocessed HDF5 files produced by preprocess_libero.py.
+Loads preprocessed HDF5 files produced by scripts/data/preprocess_libero.py.
 
 Expected HDF5 structure (one file per task):
     /image_agent:         (N, H_img, W_img, 3) uint8 HWC  — agentview at chunk start
@@ -26,7 +26,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 from transformers import T5Tokenizer
 
-from module import PAD_TOKEN_ID
+from jewam.models.transformer import PAD_TOKEN_ID
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class LiberoDataset(Dataset):
         # Pre-tokenize language instructions (one per file) and build global index
         self._index: list[tuple[Path, int]] = []
         self._lang_cache: dict[Path, tuple[torch.Tensor, torch.Tensor]] = {}
-        # Per-sample demo_idx cache — avoids re-opening every HDF5 in train.py
+        # Per-sample demo_idx cache — avoids re-opening every HDF5 during training
         # for the train/val split. Same length as self._index, aligned 1:1.
         self._demo_ids: list[int] = []
         # Counters for the 3-level balanced WeightedRandomSampler.
@@ -171,7 +171,7 @@ class LiberoDataset(Dataset):
                 # MUST exist in the HDF5 — fail fast with a clear message
                 # rather than silently broadcasting current frame as future.
                 # (Old preprocessed HDF5 from the frozen baseline does not
-                # have these; users must re-run preprocess_libero.py.)
+                # have these; users must re-run python -m scripts.data.preprocess_libero.)
                 if use_state_prediction:
                     missing = [
                         key
@@ -185,17 +185,17 @@ class LiberoDataset(Dataset):
                     if missing:
                         raise KeyError(
                             f"State-prediction enabled but {fpath.name} lacks "
-                            f"future fields: {missing}. Re-run preprocess_libero.py "
+                            f"future fields: {missing}. Re-run python -m scripts.data.preprocess_libero "
                             "to regenerate (it will add the t+H frames)."
                         )
 
-                # demo_idx is always written by preprocess_libero.py. Read it
-                # once per file here so train.py can split by (file, demo)
+                # demo_idx is always written by scripts/data/preprocess_libero.py. Read it
+                # once per file here so training can split by (file, demo)
                 # tuple and the sampler can balance per-(task, demo) without
                 # re-opening files.
                 if "demo_idx" not in f:
                     raise KeyError(
-                        f"No 'demo_idx' in {fpath} — preprocess_libero.py output "
+                        f"No 'demo_idx' in {fpath} — scripts/data/preprocess_libero.py output "
                         "is incomplete. Re-run preprocessing."
                     )
                 demo_arr = f["demo_idx"][()]
@@ -214,7 +214,7 @@ class LiberoDataset(Dataset):
                             f"Empty language_instruction in {fpath}. This makes "
                             "LIBERO multi-task training ambiguous, especially for "
                             "libero_object where the target object is language "
-                            "conditioned. Re-run preprocess_libero.py with a "
+                            "conditioned. Re-run python -m scripts.data.preprocess_libero with a "
                             "version that records task language, or set "
                             "data.dataset.use_language=False only for an explicit "
                             "no-language ablation."
@@ -266,12 +266,12 @@ class LiberoDataset(Dataset):
         img_agent = _preprocess_image(f["image_agent"][local_idx], self.img_size)
         if "image_hand" not in f:
             raise KeyError(
-                f"No 'image_hand' dataset in {fpath}. Re-run preprocess_libero.py."
+                f"No 'image_hand' dataset in {fpath}. Re-run python -m scripts.data.preprocess_libero."
             )
         img_hand = _preprocess_image(f["image_hand"][local_idx], self.img_size)
 
         # Proprioception: (9,) float64 → float32 tensor
-        # [ee_pos(3) + xyzw_quat(4) + gripper_raw(2)] — see preprocess_libero.py
+        # [ee_pos(3) + xyzw_quat(4) + gripper_raw(2)] — see jewam.data.preprocessing
         proprio = torch.from_numpy(np.array(f["proprio"][local_idx], dtype=np.float32))
 
         # Action tokens: variable-length → pad to max_action_tokens.
@@ -284,7 +284,7 @@ class LiberoDataset(Dataset):
         else:
             raise KeyError(
                 f"No 'action_tokens' or legacy 'fast_tokens' in {fpath}. "
-                "Re-run preprocess_libero.py."
+                "Re-run python -m scripts.data.preprocess_libero."
             )
         raw_tokens = f[token_key][local_idx]
         raw_tokens = np.array(raw_tokens, dtype=np.int64)

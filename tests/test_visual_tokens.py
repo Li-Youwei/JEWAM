@@ -8,8 +8,8 @@ import unittest
 import torch
 from torch import nn
 
-from jepa import JEPA
-from module import ACTION_HEAD_SIZE, MLP, ARPredictor
+from jewam.models.policy import JEPA
+from jewam.models.transformer import ACTION_HEAD_SIZE, MLP, ARPredictor
 
 
 class FakeEncoder(nn.Module):

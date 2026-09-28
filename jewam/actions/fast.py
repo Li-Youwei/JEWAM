@@ -4,7 +4,7 @@ Completes the inference pipeline:
     generate() → clean FAST tokens → fast_decode() → (H, action_dim) continuous actions
 
 Usage:
-    from fast_utils import load_fast_processor, fast_decode
+    from jewam.actions.fast import load_fast_processor, fast_decode
 
     processor = load_fast_processor("data/fast_tokenizer")
     actions = fast_decode(token_ids, lengths, processor, time_horizon=10, action_dim=7)
@@ -34,7 +34,7 @@ def load_fast_processor(tokenizer_path: str | Path) -> AutoProcessor:
 
     Args:
         tokenizer_path: directory containing the saved FAST processor
-            (output of preprocess_libero.py --save-tokenizer).
+            (output of python -m scripts.data.preprocess_libero --save-tokenizer).
 
     Returns:
         FAST processor with encode/decode capability.

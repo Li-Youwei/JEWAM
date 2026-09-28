@@ -10,7 +10,7 @@ Usage: [ENV=VALUE ...] bash scripts/preprocess_all4.sh
 Environment overrides:
   RAW_ROOT=data/libero_raw      Read-only root with four libero_<suite>/ folders.
   OUT_ROOT=data/libero_processed
-  TOKENIZER=data/fast_tokenizer Shared tokenizer from fit_tokenizer_all4.py.
+  TOKENIZER=data/fast_tokenizer Shared tokenizer from scripts.data.fit_tokenizer_all4.
   CHUNK_SIZE=20 STRIDE=1 MAX_TOKENS=80 PARALLEL=1
   ACTION_CODEC=fast             Or worldvla_bins (MAX_TOKENS defaults to 140).
   NUM_ACTION_BINS=256 ACTION_DIM=7
@@ -58,7 +58,7 @@ if [[ "$ACTION_CODEC" != "fast" && "$ACTION_CODEC" != "worldvla_bins" ]]; then
 fi
 if [[ "$ACTION_CODEC" == "fast" && ! -d "$TOKENIZER" ]]; then
     echo "ERROR: tokenizer dir not found: $TOKENIZER" >&2
-    echo "Run fit_tokenizer_all4.py first." >&2
+    echo "Run python -m scripts.data.fit_tokenizer_all4 first." >&2
     exit 1
 fi
 if [[ ! -d "$RAW_ROOT" ]]; then
@@ -120,7 +120,7 @@ run_one() {
     if [[ "$ACTION_CODEC" == "fast" ]]; then
         codec_args+=(--load-tokenizer "$TOKENIZER")
     fi
-    "$PYTHON" preprocess_libero.py \
+    "$PYTHON" -m scripts.data.preprocess_libero \
         --input "$raw" \
         --output "$out" \
         --chunk-size "$CHUNK_SIZE" \

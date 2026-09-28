@@ -1,7 +1,7 @@
 """check_fast_roundtrip.py — Sanity-check the FAST encode/decode round-trip.
 
 Validates the full action codec pipeline on preprocessed LIBERO samples
-under the **anchor-relative chunk format** (see preprocess_libero.py):
+under the **anchor-relative chunk format** (see jewam/data/preprocessing.py):
 
     obs/ee_pos, obs/ee_ori (base-frame anchor state + H+1 future frames)
       ── compute anchor-relative chunk (pos delta + rotvec delta + grip cmd) ──►
@@ -9,7 +9,7 @@ under the **anchor-relative chunk format** (see preprocess_libero.py):
       ── FAST decode ──► decoded_norm ── denormalize ──► decoded_phys
 
 We compute the **ground-truth anchor-relative chunk** directly from the raw
-LIBERO HDF5 (obs/ee_pos + obs/ee_ori, same formulas as preprocess_libero.py)
+LIBERO HDF5 (obs/ee_pos + obs/ee_ori, same formulas as jewam/data/preprocessing.py)
 and compare it to the decoded chunks in three layers:
 
   1. Normalized-space round-trip (decoded_norm vs stored continuous_actions)
@@ -23,7 +23,7 @@ This validates both the FAST codec and the anchor-relative preprocessing
 end-to-end.
 
 Usage:
-    python check_fast_roundtrip.py \\
+    python -m scripts.diagnostics.check_fast_roundtrip \\
         --processed-dir data/libero_processed/libero_spatial/ \\
         --tokenizer data/fast_tokenizer \\
         [--num-samples 10] [--print-samples 3] [--seed 0] \\
@@ -42,10 +42,9 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation as R
 
-from fast_utils import denormalize_actions, fast_decode, load_fast_processor
-from preprocess_libero import normalize_actions
-
-REPO_ROOT = Path(__file__).resolve().parent
+from jewam.actions.fast import denormalize_actions, fast_decode, load_fast_processor
+from jewam.data.preprocessing import normalize_actions
+from jewam.paths import REPO_ROOT
 
 # ---------------------------------------------------------------------------
 # File discovery
@@ -104,7 +103,7 @@ def load_raw_demo_obs(
 
     Returns (ee_pos, ee_ori, gripper_cmd) from the original LIBERO HDF5 —
     everything we need to reconstruct the anchor-relative chunk ground truth
-    using the same formulas as preprocess_libero.py::extract_chunks.
+    using the same formulas as jewam/data/preprocessing.py::extract_chunks.
     """
     with h5py.File(source_file, "r") as f:
         demo_keys = sorted(
@@ -134,7 +133,7 @@ def compute_anchor_relative_chunk_gt(
 ) -> np.ndarray:
     """Reconstruct one anchor-relative chunk from raw demo observations.
 
-    Must use the SAME formulas as preprocess_libero.py::extract_chunks so that
+    Must use the SAME formulas as jewam/data/preprocessing.py::extract_chunks so that
     the round-trip comparison is apples-to-apples:
 
         pos_delta[k] = ee_pos[t+k+1] - ee_pos[t]
@@ -287,7 +286,7 @@ def main() -> None:
 
             demo_idx = int(f["demo_idx"][local_idx])
             # chunk_idx is now the **raw step anchor** (not ci * H as in the old
-            # non-overlapping format). preprocess_libero.py stores
+            # non-overlapping format). jewam/data/preprocessing.py stores
             # samples["chunk_idx"].append(t) where t is the raw step.
             anchor_step = int(f["chunk_idx"][local_idx])
 

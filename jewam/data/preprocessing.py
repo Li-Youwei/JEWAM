@@ -1,5 +1,5 @@
 """
-preprocess_libero.py — Convert LIBERO HDF5 demos into chunk-level samples with
+Shared LIBERO preprocessing for chunk-level samples with
 anchor-relative action chunks and configurable action tokenization.
 
 LIBERO stores demonstration data in robomimic-style HDF5:
@@ -10,7 +10,7 @@ LIBERO stores demonstration data in robomimic-style HDF5:
     data/demo_0/robot_states       (T, 9)         — includes xyzw quat at [:, 5:9]
     data/demo_0/obs/gripper_states (T, 2)         — two finger joint positions
 
-This script:
+Preprocessing:
   1. Loads a single-task LIBERO HDF5 file
   2. **Sliding window** cuts trajectories into overlapping chunks at stride=1
      (was: non-overlapping stride=H, which threw away ~95% of the data)
@@ -39,7 +39,7 @@ Output HDF5 layout:
         action_low/high       (7,) float64          — normalization bounds
 
 Usage:
-    python preprocess_libero.py \
+    python -m scripts.data.preprocess_libero \
         --input /path/to/LIBERO_task_demo.hdf5 \
         --output /path/to/output.h5 \
         --chunk-size 20 \
@@ -52,12 +52,10 @@ Usage:
 
 from __future__ import annotations
 
-import argparse
 import inspect
 import json
 import re
 import shutil
-import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -66,7 +64,8 @@ import h5py
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from action_codec import FAST_CODEC, WORLDVLA_BINS_CODEC, build_action_codec
+from jewam.actions.codec import FAST_CODEC, build_action_codec
+from jewam.paths import REPO_ROOT
 
 # ---------------------------------------------------------------------------
 # Step 1: Load and inspect LIBERO HDF5
@@ -138,7 +137,7 @@ def normalize_proprio(raw: np.ndarray) -> np.ndarray:
       either destroys half the information or zeros out entirely if `abs` is omitted.
 
     This function is the single source of truth for proprio normalization. Both
-    preprocess_libero.py and eval_libero.py must call it on the same 9d layout.
+    Preprocessing and evaluation must call it on the same 9D layout.
 
     Args:
         raw: (..., 9) array — [ee_pos(3), ee_quat(4), gripper(2)]
@@ -262,7 +261,7 @@ def extract_chunks(
         "image_hand": [],
         "proprio": [],
         # State-prediction targets (frame at t+H — one step after the chunk
-        # completes). These are required by libero_dataset.py when
+        # completes). These are required by jewam.data.libero when
         # ``use_state_prediction=True`` is set in the training config. They
         # always populated here so downstream code can pick them up without
         # needing to re-preprocess for every ablation toggle.
@@ -407,7 +406,7 @@ def _patch_saved_tokenizer(save_dir: Path, tokenizer: Any | None = None) -> None
     # Prefer a vendored copy when present; otherwise copy the actual module file
     # backing the live remote-code processor. This keeps tokenizer fitting
     # usable even when the repo does not vendor data/fast_tokenizer/.
-    processor_src = Path(__file__).parent / "data" / "fast_tokenizer" / "processing_action_tokenizer.py"
+    processor_src = REPO_ROOT / "data" / "fast_tokenizer" / "processing_action_tokenizer.py"
     if not processor_src.exists() and tokenizer is not None:
         try:
             candidate = Path(inspect.getfile(tokenizer.__class__))
@@ -878,165 +877,3 @@ def print_statistics(
         print(f"    ID {token_id:>5d}: {count:>8d} ({pct:5.2f}%)")
 
     print(f"{'=' * 60}\n")
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Preprocess LIBERO HDF5 demos into chunk-level action-tokenized samples."
-    )
-    parser.add_argument(
-        "--input", required=True,
-        help="Path to input LIBERO HDF5 file (one task).",
-    )
-    parser.add_argument(
-        "--output", required=True,
-        help="Path for the output HDF5 file.",
-    )
-    parser.add_argument(
-        "--chunk-size", type=int, default=20,
-        help="Action chunk length H in raw env steps (default: 20 = 1s at 20Hz).",
-    )
-    parser.add_argument(
-        "--stride", type=int, default=1,
-        help="Sliding window stride in raw steps (default: 1). stride=1 is the "
-             "standard VLA practice — consecutive chunks share H-1 actions but "
-             "each gets a fresh observation anchor, maximizing data coverage. "
-             "Using stride=H would reduce per-demo sample count by ~H and is "
-             "strongly discouraged.",
-    )
-    parser.add_argument(
-        "--image-key", default="agentview_rgb",
-        help="Agentview image key in the HDF5 (default: agentview_rgb).",
-    )
-    parser.add_argument(
-        "--hand-image-key", default="eye_in_hand_rgb",
-        help="Eye-in-hand image key in the HDF5 (default: eye_in_hand_rgb).",
-    )
-    parser.add_argument(
-        "--max-action-tokens", type=int, default=None,
-        help="Assert that no token sequence exceeds this length. If None, skip assertion.",
-    )
-    parser.add_argument(
-        "--action-codec",
-        choices=[FAST_CODEC, WORLDVLA_BINS_CODEC],
-        default=FAST_CODEC,
-        help="Action token codec: FAST DCT+BPE or WorldVLA-style scalar bins.",
-    )
-    parser.add_argument(
-        "--num-action-bins",
-        type=int,
-        default=256,
-        help="Number of scalar bins for --action-codec=worldvla_bins.",
-    )
-    parser.add_argument(
-        "--fit-tokenizer", action="store_true",
-        help="Train a LIBERO-specific FAST BPE tokenizer instead of using the universal one.",
-    )
-    parser.add_argument(
-        "--save-tokenizer", default=None,
-        help="Directory to save the fitted FAST tokenizer.",
-    )
-    parser.add_argument(
-        "--load-tokenizer", default=None,
-        help="Directory to load a previously fitted FAST tokenizer.",
-    )
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-
-    # Step 1: Load and inspect
-    print(f"Opening {args.input} ...")
-    with h5py.File(args.input, "r") as f:
-        demo_keys = load_demo_keys(f)
-        if not demo_keys:
-            sys.exit("ERROR: No demo_* groups found under data/")
-        inspect_hdf5(f, args.image_key, args.hand_image_key, demo_keys)
-
-        # Extract language instruction
-        language_instruction, language_source = extract_language_instruction(
-            f,
-            args.input,
-        )
-        print(
-            f"  Language instruction: '{language_instruction}' "
-            f"(source={language_source})"
-        )
-
-        # Step 2+3: Extract anchor-relative sliding-window chunks in PHYSICAL units.
-        # Stats are computed from the chunks themselves (not raw HDF5 actions) so
-        # that the 1/99 percentile reflects the actual distribution the model sees.
-        samples = extract_chunks(
-            f, demo_keys, args.image_key, args.hand_image_key,
-            args.chunk_size, stride=args.stride,
-        )
-
-    if not samples["continuous_actions"]:
-        sys.exit("ERROR: No chunks extracted. Check trajectory lengths vs chunk size.")
-
-    # Compute per-dim percentile stats from the anchor-relative chunks.
-    action_low, action_high = compute_action_stats(samples["continuous_actions"])
-
-    # Normalize chunks in place to [-1, 1] using the fitted bounds.
-    samples["continuous_actions"] = [
-        normalize_actions(chunk, action_low, action_high)
-        for chunk in samples["continuous_actions"]
-    ]
-
-    # Step 4: action tokenization (on normalized anchor-relative chunks).
-    all_action_chunks = np.stack(samples["continuous_actions"], axis=0)  # (N, H, 7)
-    tokens_list, _tokenizer, action_codec = encode_action_chunks(
-        all_action_chunks,
-        action_codec=args.action_codec,
-        num_action_bins=args.num_action_bins,
-        fit=args.fit_tokenizer,
-        save_tokenizer_path=args.save_tokenizer,
-        load_tokenizer_path=args.load_tokenizer,
-    )
-
-    # Token length assertion (CRITICAL — see AGENTS.md)
-    # Do NOT silently truncate; raise an error so max_action_tokens can be increased.
-    max_observed = max(len(t) for t in tokens_list)
-    print(f"  Max observed token length: {max_observed}")
-    if args.max_action_tokens is not None and max_observed > args.max_action_tokens:
-        sys.exit(
-            f"ERROR: max observed action token length ({max_observed}) exceeds "
-            f"max_action_tokens ({args.max_action_tokens}). Increase max_action_tokens "
-            f"in config and rerun."
-        )
-
-    # Step 5: Save output HDF5
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    save_hdf5(
-        args.output, samples, tokens_list, action_low, action_high,
-        chunk_size=args.chunk_size,
-        chunk_stride=args.stride,
-        image_key=args.image_key,
-        source_file=args.input,
-        num_demos=len(demo_keys),
-        language_instruction=language_instruction,
-        language_source=language_source,
-        action_codec=action_codec,
-        save_tokenizer_path=args.save_tokenizer,
-        load_tokenizer_path=args.load_tokenizer,
-    )
-
-    # Step 6: Print statistics
-    print_statistics(
-        samples,
-        tokens_list,
-        action_low,
-        action_high,
-        action_codec_name=action_codec.name,
-    )
-
-    print("Done!")
-
-
-if __name__ == "__main__":
-    main()

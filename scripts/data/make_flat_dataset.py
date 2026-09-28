@@ -3,6 +3,9 @@
 Files keep their original basenames because LiberoDataset sorts filenames before
 assigning task IDs and splitting demonstrations. Existing matching links are
 reused; conflicting names or destinations are errors. No HDF5 data is copied.
+
+Usage:
+    python -m scripts.data.make_flat_dataset
 """
 
 from __future__ import annotations
@@ -11,8 +14,9 @@ import argparse
 import os
 from pathlib import Path
 
+from jewam.paths import REPO_ROOT
+
 SUITES = ("libero_spatial", "libero_object", "libero_goal", "libero_10")
-REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def make_flat_dataset(processed_root: Path, output: Path) -> int:

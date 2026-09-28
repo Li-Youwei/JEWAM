@@ -6,7 +6,12 @@ import unittest
 
 import torch
 
-from module import ACTION_HEAD_SIZE, PAD_TOKEN_ID, ARPredictor, MoTBlock
+from jewam.models.transformer import (
+    ACTION_HEAD_SIZE,
+    PAD_TOKEN_ID,
+    ARPredictor,
+    MoTBlock,
+)
 
 
 class MoTPredictorTest(unittest.TestCase):

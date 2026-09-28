@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aggregate_all4_results import SUITES, main
+from scripts.eval.aggregate_all4_results import SUITES, main
 
 
 class AggregateResultsTests(unittest.TestCase):
@@ -35,7 +35,7 @@ class AggregateResultsTests(unittest.TestCase):
     def run_aggregate(self):
         stdout, stderr = io.StringIO(), io.StringIO()
         args = [
-            "aggregate_all4_results.py", "--ckpt-dir", str(self.root),
+            "scripts.eval.aggregate_all4_results", "--ckpt-dir", str(self.root),
             "--checkpoint-stem", self.stem,
         ]
         with patch("sys.argv", args), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):

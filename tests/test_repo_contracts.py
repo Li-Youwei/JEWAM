@@ -36,7 +36,7 @@ class RepositoryContractsTest(unittest.TestCase):
 
     def test_dino768_projector_ablation_contract(self) -> None:
         config_text = (ROOT / "config/train/base.yaml").read_text()
-        train_source = (ROOT / "train.py").read_text()
+        train_source = (ROOT / "jewam/training/train.py").read_text()
         script_text = (ROOT / "scripts/train_eval.sh").read_text()
         self.assertIn("type: mlp", config_text)
         self.assertIn("state_head_norm_type: null", config_text)
@@ -102,7 +102,7 @@ class RepositoryContractsTest(unittest.TestCase):
         self.assertIn('--top-k "$CKPT_SELECT_TOP_K"', script_text)
 
     def test_object_checkpoint_callback_can_retain_all(self) -> None:
-        source = (ROOT / "utils.py").read_text()
+        source = (ROOT / "jewam/training/callbacks.py").read_text()
         self.assertIn("self.top_k = int(top_k)", source)
         self.assertIn("if self.top_k == -1:", source)
         self.assertIn("return\n        while len(self._top_k_heap)", source)
@@ -124,44 +124,44 @@ class RepositoryContractsTest(unittest.TestCase):
         self.assertIn("STATE_ARCH_DEFAULT=mot", script_text)
 
     def test_saved_fast_tokenizer_patch_copies_processor_module_fallback(self) -> None:
-        source = (ROOT / "preprocess_libero.py").read_text()
+        source = (ROOT / "jewam/data/preprocessing.py").read_text()
         self.assertIn("tokenizer: Any | None = None", source)
         self.assertIn("inspect.getfile", source)
         self.assertIn("tokenizer.__class__.__name__", source)
         self.assertIn("processing_action_tokenizer.py", source)
 
     def test_weights_loader_rejects_visual_prefix_checkpoint(self) -> None:
-        source = (ROOT / "eval_libero.py").read_text()
+        source = (ROOT / "jewam/evaluation/libero.py").read_text()
         self.assertIn("view_embedding", source)
         self.assertIn("agent_patch_2d_pos", source)
         self.assertIn("visual-prefix", source)
 
     def test_predict_actions_defaults_to_predictor_token_budget(self) -> None:
-        source = (ROOT / "jepa.py").read_text()
+        source = (ROOT / "jewam/models/policy.py").read_text()
         self.assertIn("max_len=None", source)
         self.assertIn("self.predictor.max_action_tokens", source)
 
     def test_language_instruction_is_not_silently_empty(self) -> None:
-        preprocess_source = (ROOT / "preprocess_libero.py").read_text()
-        dataset_source = (ROOT / "libero_dataset.py").read_text()
+        preprocess_source = (ROOT / "jewam/data/preprocessing.py").read_text()
+        dataset_source = (ROOT / "jewam/data/libero.py").read_text()
         self.assertIn("_derive_instruction_from_filename", preprocess_source)
         self.assertIn("language_source", preprocess_source)
         self.assertIn("Empty language_instruction", dataset_source)
         self.assertIn("use_language=False", dataset_source)
 
     def test_gripper_aux_is_denormalized_before_eval_execution(self) -> None:
-        source = (ROOT / "eval_libero.py").read_text()
+        source = (ROOT / "jewam/evaluation/libero.py").read_text()
         self.assertIn("_denormalize_gripper_aux", source)
         self.assertIn("action_low[6]", source)
         self.assertIn("action_high[6]", source)
 
     def test_denormalize_actions_keeps_zero_range_dims_constant(self) -> None:
-        source = (ROOT / "fast_utils.py").read_text()
+        source = (ROOT / "jewam/actions/fast.py").read_text()
         self.assertIn("zero_range = half_range < 1e-8", source)
         self.assertIn("np.where(zero_range, mid, restored)", source)
 
     def test_preprocess_writes_generic_action_token_contract(self) -> None:
-        source = (ROOT / "preprocess_libero.py").read_text()
+        source = (ROOT / "jewam/data/preprocessing.py").read_text()
         self.assertIn('"action_tokens"', source)
         self.assertIn('"action_length"', source)
         self.assertIn('"action_codec_type"', source)
@@ -170,7 +170,7 @@ class RepositoryContractsTest(unittest.TestCase):
         self.assertIn('"action_token_max"', source)
 
     def test_dataset_falls_back_to_legacy_fast_token_fields(self) -> None:
-        source = (ROOT / "libero_dataset.py").read_text()
+        source = (ROOT / "jewam/data/libero.py").read_text()
         self.assertIn('"action_tokens"', source)
         self.assertIn('"action_length"', source)
         self.assertIn('"fast_tokens"', source)
@@ -185,7 +185,7 @@ class RepositoryContractsTest(unittest.TestCase):
         self.assertIn("ACTION_CODEC", source)
 
     def test_training_seed_is_used_globally(self) -> None:
-        source = (ROOT / "train.py").read_text()
+        source = (ROOT / "jewam/training/train.py").read_text()
         self.assertIn("seed = int(cfg.seed)", source)
         self.assertIn("pl.seed_everything(seed, workers=True)", source)
         self.assertIn("seed=seed", source)
@@ -199,7 +199,7 @@ class RepositoryContractsTest(unittest.TestCase):
                 self.assertIn('--seed "$SEED"', source)
 
     def test_libero_eval_defaults_match_openvla_contract(self) -> None:
-        eval_source = (ROOT / "eval_libero.py").read_text()
+        eval_source = (ROOT / "jewam/evaluation/libero.py").read_text()
         runner_source = (ROOT / "scripts/train_eval.sh").read_text()
         self.assertIn("OPENVLA_NUM_TRIALS_PER_TASK = 50", eval_source)
         self.assertIn("OPENVLA_DUMMY_WAIT_STEPS = 10", eval_source)
@@ -228,7 +228,7 @@ class RepositoryContractsTest(unittest.TestCase):
         self.assertIn('--num-steps-wait "$EVAL_NUM_STEPS_WAIT"', runner_source)
 
     def test_libero_eval_success_contract_uses_done_and_failures(self) -> None:
-        eval_source = (ROOT / "eval_libero.py").read_text()
+        eval_source = (ROOT / "jewam/evaluation/libero.py").read_text()
         self.assertIn("def _dummy_wait(", eval_source)
         self.assertIn("success = bool(done)", eval_source)
         self.assertIn("except Exception as exc", eval_source)
