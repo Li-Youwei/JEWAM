@@ -1,0 +1,45 @@
+# Paper full model; keeps lewm.yaml as the compatible base configuration.
+defaults:
+  - lewm
+  - _self_
+
+subdir: jewam_seed${seed}
+train_split: 0.9
+ckpt_top_k: -1
+
+vision_encoder:
+  source: hf
+  model_name_or_path: ${oc.env:VISION_ENCODER,pretrained/dinov2-base}
+  freeze: true
+  local_files_only: true
+
+trainer:
+  devices: 1
+  max_steps: 100000
+  max_epochs: 999
+  val_check_interval: 4000
+  check_val_every_n_epoch: null
+
+scheduler:
+  warmup_steps: 2000
+
+predictor:
+  state_prediction_arch: mot
+  state_head_norm_type: batch
+
+projector:
+  type: mlp
+  depth: 2
+  norm_type: batch
+
+visual_tokens:
+  pool_grid: 4
+  patch_sp: true
+  patch_sp_weight: 1.0
+  patch_projector_norm_type: layer
+  sp_target_space: projected
+
+loss:
+  pred_weight: 1.0
+  sigreg_weight: 0.1
+  gripper_aux_weight: 0.0

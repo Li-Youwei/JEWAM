@@ -1,26 +1,20 @@
 """fit_tokenizer_all4.py — Unified FAST tokenizer over all 4 LIBERO suites + per-task length audit.
 
-Option B (per user decision): each task's action chunks are normalized to [-1, 1] using THAT
-task's own (action_low, action_high) percentile bounds. The 40 per-task-normalized chunk
+Each task's action chunks are normalized to [-1, 1] using that task's own
+(action_low, action_high) percentile bounds. The 40 per-task-normalized chunk
 arrays are then concatenated and used to fit a single shared BPE vocabulary. Downstream
 preprocessing (preprocess_libero.py --load-tokenizer ...) reuses this fitted tokenizer
 while each per-task .h5 keeps its own (low, high) attrs.
 
 Output:
-- Fitted tokenizer at $TOKENIZER_DIR/ (default: /Data/lyw/fast_tokenizer_all4/)
-- Audit JSON at $AUDIT_OUT (default: /Data/lyw/libero_processed_v5/audit_token_length.json)
+- Fitted tokenizer in data/fast_tokenizer/
+- Audit JSON in data/libero_processed/audit_token_length.json
 - Stdout: per-task token-length stats + recommended max_action_tokens
 
-The raw LIBERO HDF5 directory ($RAW_LIBERO_DIR, default /nas_data_new/caz/data_ssd/libero)
-is opened READ-ONLY. We never write into it.
+The raw LIBERO HDF5 directory (data/libero_raw by default) is read-only.
 
-Usage (on the GPU server):
-    HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \\
-        python fit_tokenizer_all4.py \\
-            --raw-root /nas_data_new/caz/data_ssd/libero \\
-            --tokenizer-out /Data/lyw/fast_tokenizer_all4 \\
-            --audit-out /Data/lyw/libero_processed_v5/audit_token_length.json \\
-            --chunk-size 20 --stride 1
+Usage:
+    python fit_tokenizer_all4.py --chunk-size 20 --stride 1
 """
 
 from __future__ import annotations
@@ -28,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +45,7 @@ SUITES: tuple[str, ...] = (
 )
 
 logger = logging.getLogger("fit_tokenizer_all4")
+REPO_ROOT = Path(__file__).resolve().parent
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +67,7 @@ def extract_action_chunks_only(
         raise ValueError(f"stride must be >= 1, got {stride}")
     all_chunks: list[np.ndarray] = []
 
-    for demo_i, dk in enumerate(demo_keys):
+    for dk in demo_keys:
         actions_raw = f[f"data/{dk}/actions"][()]
         T = actions_raw.shape[0]
         if T < H + 1:
@@ -148,19 +144,23 @@ def main() -> None:
     parser.add_argument(
         "--raw-root",
         type=Path,
-        default=Path("/nas_data_new/caz/data_ssd/libero"),
+        default=Path(os.environ.get("RAW_ROOT", REPO_ROOT / "data/libero_raw")),
         help="READ-ONLY raw LIBERO root containing libero_{spatial,object,goal,10}/",
     )
     parser.add_argument(
         "--tokenizer-out",
         type=Path,
-        default=Path("/Data/lyw/fast_tokenizer_all4"),
+        default=Path(os.environ.get("TOKENIZER", REPO_ROOT / "data/fast_tokenizer")),
         help="Output dir for the fitted FAST tokenizer",
     )
     parser.add_argument(
         "--audit-out",
         type=Path,
-        default=Path("/Data/lyw/libero_processed_v5/audit_token_length.json"),
+        default=Path(
+            os.environ.get(
+                "AUDIT_OUT", REPO_ROOT / "data/libero_processed/audit_token_length.json"
+            )
+        ),
         help="Output JSON for per-task token length audit",
     )
     parser.add_argument("--chunk-size", type=int, default=20)
@@ -181,9 +181,14 @@ def main() -> None:
 
     if not args.raw_root.is_dir():
         raise FileNotFoundError(f"raw_root not found or not a dir: {args.raw_root}")
+    raw_root = args.raw_root.resolve()
+    for output in (args.tokenizer_out, args.audit_out):
+        resolved = output.resolve()
+        if resolved == raw_root or raw_root in resolved.parents:
+            raise ValueError(f"Output is inside the read-only raw root: {resolved}")
 
     # -----------------------------------------------------------------------
-    # Pass 1: per-task chunk extraction + per-task normalization (Option B)
+    # Pass 1: per-task chunk extraction + per-task normalization
     # -----------------------------------------------------------------------
     per_task_normalized: dict[str, np.ndarray] = {}  # task_key → (N, H, 7) in [-1, 1]
     per_task_low: dict[str, np.ndarray] = {}
@@ -291,7 +296,7 @@ def main() -> None:
     if recommended > args.current_max_action_tokens:
         logger.warning(
             "max_action_tokens MUST be bumped to %d in config/train/data/libero.yaml AND "
-            "preprocess_all4.sh — otherwise preprocess_libero.py will assert-fail.",
+            "scripts/preprocess_all4.sh — otherwise preprocess_libero.py will assert-fail.",
             recommended,
         )
 

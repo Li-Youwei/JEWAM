@@ -8,7 +8,6 @@ from typing import Any
 import numpy as np
 import torch
 
-
 FAST_CODEC = "fast"
 WORLDVLA_BINS_CODEC = "worldvla_bins"
 FAST_VOCAB_SIZE = 1024

@@ -68,7 +68,6 @@ from scipy.spatial.transform import Rotation as R
 
 from action_codec import FAST_CODEC, WORLDVLA_BINS_CODEC, build_action_codec
 
-
 # ---------------------------------------------------------------------------
 # Step 1: Load and inspect LIBERO HDF5
 # ---------------------------------------------------------------------------
@@ -419,7 +418,8 @@ def _patch_saved_tokenizer(save_dir: Path, tokenizer: Any | None = None) -> None
 
     processor_dst = save_dir / "processing_action_tokenizer.py"
     if processor_src.exists():
-        shutil.copy2(processor_src, processor_dst)
+        if processor_src.resolve() != processor_dst.resolve():
+            shutil.copy2(processor_src, processor_dst)
     else:
         print(
             f"  WARNING: could not locate processing_action_tokenizer.py; "

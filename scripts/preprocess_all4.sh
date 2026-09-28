@@ -1,26 +1,39 @@
 #!/usr/bin/env bash
-# preprocess_all4.sh — Drive preprocess_libero.py × 40 with configurable action codec.
-#
-# Reads from /nas_data_new/caz/data_ssd/libero/libero_{spatial,object,goal,10}/*.hdf5
-# (STRICTLY READ-ONLY) and writes per-task .h5 outputs to
-# /Data/lyw/libero_processed_v5/libero_<suite>/<task>.h5.
-#
-# With ACTION_CODEC=fast, each invocation uses --load-tokenizer pointing at the
-# unified /Data/lyw/fast_tokenizer_all4/ so all 40 outputs share BPE vocab.
-# With ACTION_CODEC=worldvla_bins, normalized actions are pretokenized into
-# fixed CHUNK_SIZE*ACTION_DIM scalar-bin tokens and TOKENIZER is ignored.
-# Per-task action_low/high are computed independently (Option B). Skips tasks
-# whose output already exists, so the script is idempotent and resumable.
-#
-# Usage (on the GPU server, after fit_tokenizer_all4.py has produced the
-# tokenizer):
-#   bash preprocess_all4.sh                       # serial
-#   PARALLEL=4 bash preprocess_all4.sh            # 4 invocations at a time
+# Preprocess all 40 LIBERO tasks with a shared FAST tokenizer or scalar bins.
+# Raw data is read-only. Existing outputs with the same codec are skipped.
 set -euo pipefail
 
-RAW_ROOT="${RAW_ROOT:-/nas_data_new/caz/data_ssd/libero}"
-OUT_ROOT="${OUT_ROOT:-/Data/lyw/libero_processed_v5}"
-TOKENIZER="${TOKENIZER:-/Data/lyw/fast_tokenizer_all4}"
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    cat <<'HELP'
+Usage: [ENV=VALUE ...] bash scripts/preprocess_all4.sh
+
+Environment overrides:
+  RAW_ROOT=data/libero_raw      Read-only root with four libero_<suite>/ folders.
+  OUT_ROOT=data/libero_processed
+  TOKENIZER=data/fast_tokenizer Shared tokenizer from fit_tokenizer_all4.py.
+  CHUNK_SIZE=20 STRIDE=1 MAX_TOKENS=80 PARALLEL=1
+  ACTION_CODEC=fast             Or worldvla_bins (MAX_TOKENS defaults to 140).
+  NUM_ACTION_BINS=256 ACTION_DIM=7
+  PYTHON=python                Interpreter from the active environment.
+
+Paths are resolved from the repository. Outputs may not be inside RAW_ROOT,
+including through symbolic links. Existing outputs are skipped after a codec
+check; use a separate OUT_ROOT when changing preprocessing settings.
+HELP
+    exit 0
+fi
+if [[ $# -gt 0 ]]; then
+    echo "ERROR: unexpected argument: $1 (use --help)" >&2
+    exit 2
+fi
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+PYTHON="${PYTHON:-python}"
+command -v "$PYTHON" >/dev/null || { echo "ERROR: Python not found: $PYTHON; activate your environment or set PYTHON." >&2; exit 1; }
+RAW_ROOT="${RAW_ROOT:-${REPO_ROOT}/data/libero_raw}"
+OUT_ROOT="${OUT_ROOT:-${REPO_ROOT}/data/libero_processed}"
+TOKENIZER="${TOKENIZER:-${REPO_ROOT}/data/fast_tokenizer}"
 CHUNK_SIZE="${CHUNK_SIZE:-20}"
 ACTION_DIM="${ACTION_DIM:-7}"
 STRIDE="${STRIDE:-1}"
@@ -37,7 +50,7 @@ PARALLEL="${PARALLEL:-1}"
 
 # xargs spawns child shells via `bash -c` — they do NOT inherit the parent's
 # local vars. Export so the per-task run_one() can see them after the fanout.
-export CHUNK_SIZE ACTION_DIM STRIDE MAX_TOKENS TOKENIZER ACTION_CODEC NUM_ACTION_BINS
+export CHUNK_SIZE ACTION_DIM STRIDE MAX_TOKENS TOKENIZER ACTION_CODEC NUM_ACTION_BINS PYTHON RAW_ROOT
 
 if [[ "$ACTION_CODEC" != "fast" && "$ACTION_CODEC" != "worldvla_bins" ]]; then
     echo "ERROR: ACTION_CODEC must be fast or worldvla_bins, got: $ACTION_CODEC" >&2
@@ -53,13 +66,18 @@ if [[ ! -d "$RAW_ROOT" ]]; then
     exit 1
 fi
 
-# Refuse to write under the read-only raw data root.
-case "$OUT_ROOT" in
-    /nas_data_new/caz/data_ssd/libero*|/nas_data_new/caz/data_ssd/libero)
-        echo "ERROR: OUT_ROOT=$OUT_ROOT is inside the READ-ONLY raw LIBERO path. Aborting." >&2
-        exit 1
-        ;;
-esac
+# Resolve existing parent links too, so aliases cannot bypass raw-data protection.
+check_output_path() {
+    "$PYTHON" - "$RAW_ROOT" "$1" <<'PY'
+from pathlib import Path
+import sys
+
+raw, output = (Path(value).resolve() for value in sys.argv[1:])
+if output == raw or raw in output.parents:
+    raise SystemExit(f"ERROR: output is inside the read-only raw root: {output}")
+PY
+}
+check_output_path "$OUT_ROOT"
 
 mkdir -p "$OUT_ROOT"
 
@@ -68,7 +86,7 @@ SUITES=("libero_spatial" "libero_object" "libero_goal" "libero_10")
 check_existing_codec() {
     local out="$1" expected="$2"
     local actual
-    if ! actual=$(python -c 'import h5py, sys
+    if ! actual=$("$PYTHON" -c 'import h5py, sys
 path = sys.argv[1]
 with h5py.File(path, "r") as f:
     value = f.attrs.get("action_codec_type", None)
@@ -91,8 +109,9 @@ run_one() {
     base=$(basename "$raw" .hdf5)
     base="${base%_demo}"
     local out="${out_suite_dir}/${base}.h5"
+    check_output_path "$out" || return 1
     if [[ -f "$out" ]]; then
-        check_existing_codec "$out" "$ACTION_CODEC"
+        check_existing_codec "$out" "$ACTION_CODEC" || return 1
         echo "[skip] $out exists (action_codec=$ACTION_CODEC)"
         return 0
     fi
@@ -101,7 +120,7 @@ run_one() {
     if [[ "$ACTION_CODEC" == "fast" ]]; then
         codec_args+=(--load-tokenizer "$TOKENIZER")
     fi
-    python preprocess_libero.py \
+    "$PYTHON" preprocess_libero.py \
         --input "$raw" \
         --output "$out" \
         --chunk-size "$CHUNK_SIZE" \
@@ -117,6 +136,7 @@ declare -a JOBS=()
 for suite in "${SUITES[@]}"; do
     suite_dir="${RAW_ROOT}/${suite}"
     out_suite_dir="${OUT_ROOT}/${suite}"
+    check_output_path "$out_suite_dir"
     mkdir -p "$out_suite_dir"
     if [[ ! -d "$suite_dir" ]]; then
         echo "WARN: suite dir missing: $suite_dir" >&2
@@ -129,6 +149,10 @@ for suite in "${SUITES[@]}"; do
 done
 
 echo "[preprocess_all4] ${#JOBS[@]} tasks to process (PARALLEL=$PARALLEL)"
+if [[ "${#JOBS[@]}" -eq 0 ]]; then
+    echo "ERROR: no raw .hdf5 tasks found under $RAW_ROOT" >&2
+    exit 1
+fi
 
 if [[ "$PARALLEL" -le 1 ]]; then
     for entry in "${JOBS[@]}"; do
@@ -137,10 +161,12 @@ if [[ "$PARALLEL" -le 1 ]]; then
     done
 else
     # Simple N-way fan-out via xargs.
-    printf '%s\n' "${JOBS[@]}" | xargs -P "$PARALLEL" -I {} bash -c '
+    printf '%s\0' "${JOBS[@]}" | xargs -0 -P "$PARALLEL" -I {} bash -c '
+        set -euo pipefail
         entry="$1"
         raw="${entry%%|*}"
         out_suite_dir="${entry##*|}"
+        '"$(declare -f check_output_path)"'
         '"$(declare -f check_existing_codec)"'
         '"$(declare -f run_one)"'
         run_one "$raw" "$out_suite_dir"

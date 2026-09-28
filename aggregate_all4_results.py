@@ -1,14 +1,16 @@
 """aggregate_all4_results.py — Parse 4-suite eval logs into a single summary.
 
-Walks ``<ckpt-dir>/eval_libero_<suite>.log`` for each of the 4 suites, regex-
+Walks ``<ckpt-dir>/eval_<checkpoint-stem>_<suite>.log`` for each of the 4 suites, regex-
 extracts the per-task success lines (e.g. ``Task  0:  18/20 ( 90.0%)``), sums
 successes per suite, and writes a markdown table to stdout (and optionally a
-file). Mirrors the regex used in ``run_sp_libero_spatial.sh:193``.
+file). Requires all ten tasks in every suite; incomplete runs are rejected.
+Without --checkpoint-stem, reads legacy ``eval_<suite>.log`` names.
 
 Usage:
     python aggregate_all4_results.py \\
-        --ckpt-dir /Data/lyw/stable-wm/all4_sp_sigreg_seed3072 \\
-        --out /Data/lyw/all4_sp_sigreg_seed3072.md
+        --ckpt-dir checkpoints/full_seed3072 \\
+        --checkpoint-stem lewm_step_100000_object \\
+        --out checkpoints/full_seed3072/results.md
 """
 
 from __future__ import annotations
@@ -58,7 +60,7 @@ def parse_suite_log(log_path: Path, suite: str) -> SuiteResult | None:
             t = int(m.group(3))
             r = float(m.group(4))
             # Best-effort: extract task name after the percentage, if present.
-            tail = line[m.end() :].strip(" ——-:\n")
+            tail = line[m.end() :].strip(" —-:\n")
             per_task.append((tid, s, t, r, tail))
     # The per-task lines appear twice in eval_libero.py output: once mid-eval
     # and once in the SUMMARY block. Dedup by keeping the last occurrence per
@@ -108,25 +110,38 @@ def render_markdown(arm: str, seed: int, results: list[SuiteResult]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ckpt-dir", type=Path, required=True)
-    parser.add_argument("--arm", default="sp_sigreg")
+    parser.add_argument("--arm", default="full")
+    parser.add_argument(
+        "--checkpoint-stem", default=None,
+        help="Checkpoint filename without .ckpt, as used by scripts/train_eval.sh logs.",
+    )
     parser.add_argument("--seed", type=int, default=3072)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
 
     results: list[SuiteResult] = []
-    missing: list[str] = []
+    incomplete: list[str] = []
+    expected_task_ids = set(range(10))
     for suite in SUITES:
-        log_path = args.ckpt_dir / f"eval_{suite}.log"
+        prefix = f"eval_{args.checkpoint_stem}" if args.checkpoint_stem else "eval"
+        log_path = args.ckpt_dir / f"{prefix}_{suite}.log"
         r = parse_suite_log(log_path, suite)
         if r is None or r.total == 0:
-            missing.append(suite)
+            incomplete.append(f"{suite}: missing or empty log")
+            continue
+        task_ids = {row[0] for row in r.per_task}
+        if task_ids != expected_task_ids:
+            incomplete.append(f"{suite}: expected task IDs 0..9, found {sorted(task_ids)}")
+            continue
+        if any(total <= 0 or not 0 <= succ <= total for _, succ, total, _, _ in r.per_task):
+            incomplete.append(f"{suite}: invalid success/episode counts")
             continue
         results.append(r)
 
-    if missing:
-        print(f"[WARN] missing or empty: {missing}", file=sys.stderr)
-    if not results:
-        print("ERROR: no eval logs parsed", file=sys.stderr)
+    if incomplete:
+        print("ERROR: incomplete four-suite evaluation:", file=sys.stderr)
+        for reason in incomplete:
+            print(f"  {reason}", file=sys.stderr)
         return 1
 
     md = render_markdown(args.arm, args.seed, results)

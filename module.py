@@ -1,7 +1,7 @@
 import torch
-from torch import nn
 import torch.nn.functional as F
 from einops import rearrange
+from torch import nn
 
 
 class SIGReg(torch.nn.Module):
@@ -321,15 +321,28 @@ class MLP(nn.Module):
         output_dim=None,
         norm_fn=nn.LayerNorm,
         act_fn=nn.GELU,
+        depth=2,
     ):
         super().__init__()
-        norm_fn = norm_fn(hidden_dim) if norm_fn is not None else nn.Identity()
-        self.net = nn.Sequential(
+        depth = int(depth)
+        if depth < 2:
+            raise ValueError(f"MLP depth must be >= 2, got {depth}")
+
+        layers = [
             nn.Linear(input_dim, hidden_dim),
-            norm_fn,
+            norm_fn(hidden_dim) if norm_fn is not None else nn.Identity(),
             act_fn(),
-            nn.Linear(hidden_dim, output_dim or input_dim),
-        )
+        ]
+        for _ in range(depth - 2):
+            layers.extend(
+                [
+                    nn.Linear(hidden_dim, hidden_dim),
+                    norm_fn(hidden_dim) if norm_fn is not None else nn.Identity(),
+                    act_fn(),
+                ]
+            )
+        layers.append(nn.Linear(hidden_dim, output_dim or input_dim))
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x):
         """
@@ -407,6 +420,7 @@ class ARPredictor(nn.Module):
         n_visual_tokens_per_view: int = 1,
         visual_pool_grid: int = 0,
         state_pred_visual_tokens: bool = False,
+        state_pred_visual_dim: int | None = None,
         use_gripper_aux: bool = False,
         gripper_chunk_size: int = 20,
         state_prediction_arch: str = "shared",
@@ -429,6 +443,14 @@ class ARPredictor(nn.Module):
         self.action_head_size = self.action_vocab_size + 2
         self.use_state_prediction = use_state_prediction
         self.state_pred_visual_tokens = bool(state_pred_visual_tokens)
+        self.state_pred_visual_dim = (
+            embed_dim if state_pred_visual_dim is None else int(state_pred_visual_dim)
+        )
+        if self.state_pred_visual_dim <= 0:
+            raise ValueError(
+                "state_pred_visual_dim must be > 0, got "
+                f"{self.state_pred_visual_dim}"
+            )
         self.n_state_query = 3 if use_state_prediction else 0
         if state_prediction_arch not in ("shared", "mot"):
             raise ValueError(
@@ -545,12 +567,14 @@ class ARPredictor(nn.Module):
             # Per-stream projector: matches the encoder-side projector
             # signature (LeWM paper Sec. 3 + upstream pattern). With
             # state_pred_visual_tokens=True, Q_ag/Q_hd predict the full
-            # CLS+patch token set (B, nv, D) instead of only CLS (B, D),
-            # giving patch tokens a direct state-prediction target.
+            # CLS+patch token set (B, nv, D_target) instead of only CLS
+            # (B, D_target), giving patch tokens a direct state-prediction
+            # target. D_target can differ from the transformer embed_dim, e.g.
+            # direct frozen-DINO features rather than projected latents.
             visual_pred_dim = (
-                embed_dim * self.n_visual_per_view
+                self.state_pred_visual_dim * self.n_visual_per_view
                 if self.state_pred_visual_tokens
-                else embed_dim
+                else self.state_pred_visual_dim
             )
             self.state_pred_head_ag = MLP(
                 embed_dim,
@@ -1037,8 +1061,9 @@ class ARPredictor(nn.Module):
             return action_logits
 
         # 9. Read out the three STATE_QUERY positions and run them through
-        #    their respective heads. Q_ag/Q_hd predict latent (D,) by default
-        #    or the full visual token set (N,D) when patch-level SP is enabled.
+        #    their respective heads. Q_ag/Q_hd predict latent (D_target,) by
+        #    default or the full visual token set (N,D_target) when patch-level
+        #    SP is enabled.
         #    Q_pr
         #    predicts the raw 9d proprio vector at t+H (NOT an embedding —
         #    the target is the un-encoded proprio so the loss is in physical
@@ -1048,8 +1073,9 @@ class ARPredictor(nn.Module):
         pred_ag = self.state_pred_head_ag(q_out[:, 0])  # (B, D) or (B, N*D)
         pred_hd = self.state_pred_head_hd(q_out[:, 1])  # (B, D) or (B, N*D)
         if self.state_pred_visual_tokens:
-            pred_ag = pred_ag.reshape(B, self.n_visual_per_view, self.embed_dim)
-            pred_hd = pred_hd.reshape(B, self.n_visual_per_view, self.embed_dim)
+            target_dim = getattr(self, "state_pred_visual_dim", self.embed_dim)
+            pred_ag = pred_ag.reshape(B, self.n_visual_per_view, target_dim)
+            pred_hd = pred_hd.reshape(B, self.n_visual_per_view, target_dim)
         pred_pr = self.state_pred_head_pr(q_out[:, 2])  # (B, proprio_dim)
 
         if self.use_gripper_aux:

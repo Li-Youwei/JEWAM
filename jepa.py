@@ -156,8 +156,9 @@ class JEPA(nn.Module):
         pixels_hand_future,
         *,
         return_all_tokens: bool = False,
+        output_space: str = "projected",
     ):
-        """Encode future-frame visual inputs through the SHARED ViT + projector.
+        """Encode future-frame visual inputs through the shared ViT.
 
         Used by the state-prediction branch (``use_state_prediction=True``).
         Following LeWM paper Section 3 — "We do not employ stop-gradient,
@@ -176,15 +177,23 @@ class JEPA(nn.Module):
             pixels_hand_future: (B, 3, H, W) hand-cam image at raw step t+H.
             return_all_tokens: when True, return the same CLS+pooled-patch
                 layout as ``encode()`` for patch-level state prediction.
+            output_space: ``projected`` applies the trainable visual projector;
+                ``backbone`` returns pooled ViT ``last_hidden_state`` directly.
 
         Returns:
             When ``return_all_tokens`` is False:
-                z_agent_future: (B, D) future agentview CLS latent.
-                z_hand_future: (B, D) future hand-cam CLS latent.
+                z_agent_future: (B, D_target) future agentview CLS latent.
+                z_hand_future: (B, D_target) future hand-cam CLS latent.
             When True:
-                z_agent_future: (B, N, D) future agentview tokens.
-                z_hand_future: (B, N, D) future hand-cam tokens.
+                z_agent_future: (B, N, D_target) future agentview tokens.
+                z_hand_future: (B, N, D_target) future hand-cam tokens.
         """
+        output_space = str(output_space).lower()
+        if output_space not in {"projected", "backbone"}:
+            raise ValueError(
+                "output_space must be 'projected' or 'backbone', got "
+                f"{output_space!r}"
+            )
         visual_cat = torch.cat(
             [pixels_agent_future, pixels_hand_future],
             dim=0,
@@ -192,13 +201,18 @@ class JEPA(nn.Module):
         visual_out = self._encode_visual_cat(visual_cat)
         if return_all_tokens:
             tokens_2b = self._pool_visual_tokens(visual_out.last_hidden_state)
-            visual_z = self._project_visual_tokens(tokens_2b)  # (2B, N, D)
+            visual_z = (
+                self._project_visual_tokens(tokens_2b)
+                if output_space == "projected"
+                else tokens_2b
+            )
             z_agent_future, z_hand_future = visual_z.chunk(2, dim=0)
             return z_agent_future, z_hand_future
 
-        # CLS-only path for SP / SIGReg: take last_hidden_state[:, 0] before
-        # the projector to skip the pooling-and-reshape codepath entirely.
-        visual_z = self.projector(visual_out.last_hidden_state[:, 0])  # (2B, D)
+        # CLS-only path skips the pooling-and-reshape codepath entirely.
+        visual_z = visual_out.last_hidden_state[:, 0]
+        if output_space == "projected":
+            visual_z = self.projector(visual_z)
         z_agent_future, z_hand_future = visual_z.chunk(2, dim=0)
         return z_agent_future, z_hand_future
 

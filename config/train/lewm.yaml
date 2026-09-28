@@ -61,38 +61,27 @@ predictor:
   dim_head: 64
   dropout: 0.2
   emb_dropout: 0.0
+  # null preserves the legacy behavior of mirroring projector.norm_type.
+  # Set explicitly for projector ablations where the visual path is Identity.
+  state_head_norm_type: null
   # shared: legacy dense predictor Transformer.
   # mot: Meta MoT-style modality routing. Language, visual, proprio, and
   # action tokens use separate non-embedding transformer parameters while
   # retaining global self-attention over the full sequence.
   state_prediction_arch: shared
 
-# Projector normalization layer — see AGENTS.md for SIGReg/BatchNorm notes.
-# Default 'layer' reproduces the frozen baseline.
-# Switch to 'batch' when sigreg_weight > 0 (LeWM paper Section 3 requires
-# BatchNorm because LayerNorm prevents SIGReg from optimizing the latent
-# distribution toward isotropic Gaussian). train.py errors out if this
-# constraint is violated.
+# Visual projector; the paper full model overrides this in jewam.yaml.
+# SIGReg requires batch normalization on the trainable CLS projector.
 projector:
+  type: mlp  # 'mlp' (legacy) | 'identity' (requires vision hidden_dim == wm.embed_dim)
+  depth: 2  # Number of Linear layers; 2 preserves the legacy projector exactly.
   norm_type: layer  # 'layer' (baseline) | 'batch' (required when sigreg_weight > 0)
 
-# State-prediction + SIGReg loss weights.
-# Default 0 = pure-action baseline (frozen @ 7008f15, fully reproducible).
-# Recommended starting weights when both enabled (LeWM paper defaults):
-#   pred_weight = 1.0  (no separate weight in paper; implicitly 1.0)
-#   sigreg_weight = 0.1  (paper Section 3, λ = 0.1)
+# Compatibility defaults. jewam.yaml enables the paper SP and SIGReg losses.
 loss:
   pred_weight: 0.0       # > 0 enables Q_ag/Q_hd/Q_pr STATE_QUERY tokens + 3 MSE losses
   sigreg_weight: 0.0     # > 0 enables SIGReg on encoder outputs (Algorithm 1 strict)
-  # Gripper-aware auxiliary head + MSE loss. When > 0 the predictor grows a
-  # small MLP that reads the BOS hidden state and regresses the (H,)
-  # gripper-command sequence directly, bypassing FAST tokenization for dim 6.
-  # Motivation: diagnostic on libero_object 0% showed FAST joint BPE diluting
-  # the gripper signal — predicted gripper command oscillated ±1 while GT
-  # stayed constant at -1 for early chunks. The bypass head restores a clean
-  # direct signal. At inference eval_libero.py auto-detects the head,
-  # denormalizes it with the task's action_low/high, then overrides
-  # actions_phys[..., 6].
+  # Optional compatibility head; disabled in the paper experiments.
   gripper_aux_weight: 0.0
   sigreg:
     kwargs:

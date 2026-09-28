@@ -15,9 +15,9 @@ class ModelObjectCallBack(Callback):
         epochs. Used by spatial-only runs that train epoch-bounded.
       - **Per-step (4-suite joint)**: when ``step_interval`` is set, fires on
         each validation end (which Lightning triggers every
-        ``trainer.val_check_interval`` steps). Maintains the top-K checkpoints
-        by ``validate/ce_loss_taskbal`` and deletes worse-than-K files so disk
-        usage stays bounded.
+        ``trainer.val_check_interval`` steps). ``top_k=-1`` retains every
+        checkpoint; a positive value keeps only that many checkpoints ranked
+        by ``validate/ce_loss_taskbal``.
 
     `_object.ckpt` filename is required by eval_libero.py for SP / BN-projector
     architectures (state_dict mode rejects those — see eval_libero.py:131-145).
@@ -30,13 +30,17 @@ class ModelObjectCallBack(Callback):
         epoch_interval: int = 1,
         step_interval: int | None = None,
         top_k: int = 3,
+        save_final_on_train_end: bool = False,
     ):
         super().__init__()
         self.dirpath = Path(dirpath)
         self.filename = filename
         self.epoch_interval = epoch_interval
         self.step_interval = step_interval
-        self.top_k = max(1, int(top_k))
+        self.top_k = int(top_k)
+        self.save_final_on_train_end = save_final_on_train_end
+        if self.top_k == 0 or self.top_k < -1:
+            raise ValueError("top_k must be -1 (keep all) or a positive integer")
         # (score, step, path) — kept sorted by score ascending; lower CE = better.
         self._top_k_heap: list[tuple[float, int, Path]] = []
 
@@ -87,10 +91,25 @@ class ModelObjectCallBack(Callback):
         # — typical near the end of an overfit run).
         self._refresh_latest_link()
 
+    def on_train_end(self, trainer, pl_module):
+        """Save the fixed-budget model when no validation set exists.
+
+        Validation-based experiments keep their original checkpoint cadence
+        and ranking. All-demonstration retraining has no validation callback
+        from which to save an object checkpoint.
+        """
+        if not self.save_final_on_train_end or not trainer.is_global_zero:
+            return
+        step = int(trainer.global_step)
+        path = self.dirpath / f"{self.filename}_step_{step}_object.ckpt"
+        self._dump_model(pl_module.model, path)
+
     def _update_top_k(self, score: float, step: int, path: Path) -> None:
         self._top_k_heap.append((score, step, path))
         # Sort ascending — worst (highest CE) at the end.
         self._top_k_heap.sort(key=lambda x: (x[0], x[1]))
+        if self.top_k == -1:
+            return
         while len(self._top_k_heap) > self.top_k:
             _bad_score, _bad_step, bad_path = self._top_k_heap.pop()
             try:

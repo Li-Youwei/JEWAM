@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """check_fast_roundtrip.py — Sanity-check the FAST encode/decode round-trip.
 
 Validates the full action codec pipeline on preprocessed LIBERO samples
@@ -20,13 +19,13 @@ and compare it to the decoded chunks in three layers:
   3. Physical-space (decoded_phys vs gt_phys) — what the robot actually
      sees after denormalization.
 
-This validates both the FAST codec AND the new anchor-relative preprocessing
+This validates both the FAST codec and the anchor-relative preprocessing
 end-to-end.
 
 Usage:
     python check_fast_roundtrip.py \\
-        --processed-dir /Data/lyw/libero_processed/libero_spatial/ \\
-        --tokenizer /Data/lyw/fast_tokenizer \\
+        --processed-dir data/libero_processed/libero_spatial/ \\
+        --tokenizer data/fast_tokenizer \\
         [--num-samples 10] [--print-samples 3] [--seed 0] \\
         [--libero-root /path/to/raw/libero_spatial]
 """
@@ -34,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import random
 from pathlib import Path
 
@@ -45,6 +45,7 @@ from scipy.spatial.transform import Rotation as R
 from fast_utils import denormalize_actions, fast_decode, load_fast_processor
 from preprocess_libero import normalize_actions
 
+REPO_ROOT = Path(__file__).resolve().parent
 
 # ---------------------------------------------------------------------------
 # File discovery
@@ -107,7 +108,7 @@ def load_raw_demo_obs(
     """
     with h5py.File(source_file, "r") as f:
         demo_keys = sorted(
-            (k for k in f["data"].keys() if k.startswith("demo_")),
+            (k for k in f["data"] if k.startswith("demo_")),
             key=lambda k: int(k.split("_")[1]),
         )
         if not demo_keys:
@@ -214,13 +215,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--processed-dir",
         type=Path,
-        default=Path("/Data/lyw/libero_processed/libero_spatial/"),
+        default=Path(
+            os.environ.get(
+                "PROCESSED_ROOT", REPO_ROOT / "data/libero_processed"
+            )
+        ) / "libero_spatial",
         help="Directory containing preprocessed HDF5 files (searched recursively).",
     )
     parser.add_argument(
         "--tokenizer",
         type=Path,
-        default=Path("/Data/lyw/fast_tokenizer"),
+        default=Path(os.environ.get("TOKENIZER", REPO_ROOT / "data/fast_tokenizer")),
         help="Directory containing the saved FAST tokenizer.",
     )
     parser.add_argument(

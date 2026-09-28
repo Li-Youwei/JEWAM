@@ -1,0 +1,11 @@
+# Portable starting environment, not the original experiment lockfile.
+# Run from the repository root. Install the CUDA-specific PyTorch build
+# separately if needed; LIBERO simulation is an optional second install.
+name: jewam
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - -r requirements.txt

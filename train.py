@@ -1,20 +1,16 @@
+import os
 from functools import partial
 from pathlib import Path
 
 import hydra
-import lightning as pl
-import stable_pretraining as spt
-import stable_worldmodel as swm
 import torch
 import torch.nn.functional as F
-from lightning.pytorch.loggers import TensorBoardLogger
 from omegaconf import OmegaConf
 from transformers import T5EncoderModel
 
 from action_codec import WORLDVLA_BINS_CODEC, build_action_codec
 from jepa import JEPA
-from module import ARPredictor, MLP, SIGReg
-from utils import ModelObjectCallBack, PeriodicPrintCallback
+from module import MLP, ARPredictor, SIGReg
 from vision_backbone import build_visual_encoder
 
 
@@ -38,17 +34,13 @@ def lejepa_forward(self, batch, stage, cfg):
 
     When ``cfg.loss.pred_weight > 0``: also computes ``L_pred`` — three MSE
     losses against the future-frame encoder outputs (visual) and the raw
-    9-d future proprio. Per LeWM paper Section 3, the target encoder
-    branch does NOT use stop-gradient; SIGReg is what prevents collapse.
+    9-d future proprio. Future visual targets retain projector gradients.
 
     When ``cfg.loss.sigreg_weight > 0``: also computes ``L_sigreg`` on the
-    encoder outputs only — Algorithm 1 strict (4 streams in our setup:
-    z_ag_t, z_hd_t, z_ag_{t+H}, z_hd_{t+H}). Predictor outputs (ẑ) are
-    NOT included; that matches the paper's Algorithm 1 listing rather
-    than Figure 1's looser visual.
+    CLS encoder outputs only (four streams when state prediction is enabled:
+    z_ag_t, z_hd_t, z_ag_{t+H}, z_hd_{t+H}). Predictor outputs are not included.
     """
-    # `cfg.loss` may be absent in overfit.yaml (which doesn't define a
-    # loss: section); guard with cfg.get(...) so both configs work.
+    # Preserve compatibility with configurations saved without loss settings.
     loss_cfg = cfg.get("loss", {}) or {}
     pred_weight = float(loss_cfg.get("pred_weight", 0.0))
     sigreg_weight = float(loss_cfg.get("sigreg_weight", 0.0))
@@ -58,6 +50,7 @@ def lejepa_forward(self, batch, stage, cfg):
     visual_cfg = cfg.get("visual_tokens", {}) or {}
     patch_sp = _cfg_bool(visual_cfg.get("patch_sp", False), name="visual_tokens.patch_sp")
     patch_sp_weight = float(visual_cfg.get("patch_sp_weight", 1.0))
+    sp_target_space = str(visual_cfg.get("sp_target_space", "projected")).lower()
 
     # Pre-initialize future-frame latents so the SIGReg block can reference
     # them unconditionally without static-analysis warnings, and so the
@@ -66,6 +59,8 @@ def lejepa_forward(self, batch, stage, cfg):
     # when use_state_pred is True.
     z_agent_future: torch.Tensor | None = None
     z_hand_future: torch.Tensor | None = None
+    z_agent_future_sigreg: torch.Tensor | None = None
+    z_hand_future_sigreg: torch.Tensor | None = None
 
     # 1. Unpack batch
     pixels_agent = batch["pixels_agent"]  # (B, 3, H, W)
@@ -162,16 +157,48 @@ def lejepa_forward(self, batch, stage, cfg):
         pixels_hand_future = batch["pixels_hand_future"]
         proprio_future = batch["proprio_future"]  # (B, 9) raw target
 
-        # Encode future visual through the SAME encoder + projector. Both
-        # the source path (z_agent/z_hand of the current frame, computed
-        # in step 2) and the target path (here) get gradients — that's
-        # the LeWM "no heuristics" recipe; SIGReg is the only thing
-        # holding off collapse.
+        # Encode future visual through the same encoder. The default target is
+        # the projected latent; the backbone ablation directly supervises the
+        # predictor with frozen ViT last_hidden_state tokens.
         z_agent_future, z_hand_future = self.model.encode_future_visual(
             pixels_agent_future,
             pixels_hand_future,
             return_all_tokens=patch_sp,
+            output_space=sp_target_space,
         )
+
+        # SIGReg remains in projected CLS space regardless of the SP target
+        # space. Do not run this auxiliary path when SIGReg is disabled: an
+        # otherwise-unused MLP call would still update BatchNorm running stats.
+        if sigreg_weight > 0:
+            if sp_target_space == "backbone":
+                future_ag_cls = (
+                    z_agent_future[:, 0]
+                    if z_agent_future.dim() == 3
+                    else z_agent_future
+                )
+                future_hd_cls = (
+                    z_hand_future[:, 0]
+                    if z_hand_future.dim() == 3
+                    else z_hand_future
+                )
+                future_cls_projected = self.model.projector(
+                    torch.cat([future_ag_cls, future_hd_cls], dim=0)
+                )
+                z_agent_future_sigreg, z_hand_future_sigreg = (
+                    future_cls_projected.chunk(2, dim=0)
+                )
+            else:
+                z_agent_future_sigreg = (
+                    z_agent_future[:, 0]
+                    if z_agent_future.dim() == 3
+                    else z_agent_future
+                )
+                z_hand_future_sigreg = (
+                    z_hand_future[:, 0]
+                    if z_hand_future.dim() == 3
+                    else z_hand_future
+                )
 
         if patch_sp:
             if (
@@ -250,14 +277,15 @@ def lejepa_forward(self, batch, stage, cfg):
             # SIGReg degenerates to 2 streams (current views only).
             sigreg_input = torch.stack([z_ag_cls, z_hd_cls], dim=0)
         else:
-            z_ag_future_cls = (
-                z_agent_future[:, 0] if z_agent_future.dim() == 3 else z_agent_future
-            )
-            z_hd_future_cls = (
-                z_hand_future[:, 0] if z_hand_future.dim() == 3 else z_hand_future
-            )
+            if z_agent_future_sigreg is None or z_hand_future_sigreg is None:
+                raise RuntimeError("Future SIGReg streams were not initialized")
             sigreg_input = torch.stack(
-                [z_ag_cls, z_hd_cls, z_ag_future_cls, z_hd_future_cls],
+                [
+                    z_ag_cls,
+                    z_hd_cls,
+                    z_agent_future_sigreg,
+                    z_hand_future_sigreg,
+                ],
                 dim=0,
             )
         output["sigreg_loss"] = self.sigreg(sigreg_input)
@@ -339,6 +367,12 @@ def lejepa_forward(self, batch, stage, cfg):
 
 @hydra.main(version_base=None, config_path="./config/train", config_name="lewm")
 def run(cfg):
+    import lightning as pl
+    import stable_pretraining as spt
+    from lightning.pytorch.loggers import TensorBoardLogger
+
+    from utils import ModelObjectCallBack, PeriodicPrintCallback
+
     #########################
     ##       dataset       ##
     #########################
@@ -382,16 +416,33 @@ def run(cfg):
     use_state_prediction = pred_weight > 0
     use_gripper_aux = gripper_aux_weight > 0
 
+    projector_cfg = cfg.get("projector", {}) or {}
+    projector_type = str(projector_cfg.get("type", "mlp")).lower()
+    projector_depth = int(projector_cfg.get("depth", 2))
+    if projector_type not in {"mlp", "identity"}:
+        raise ValueError(
+            "projector.type must be 'mlp' or 'identity', got "
+            f"{projector_type!r}"
+        )
+    if projector_depth < 2:
+        raise ValueError(f"projector.depth must be >= 2, got {projector_depth}")
+
     # Projector normalization: must be 'batch' when SIGReg is enabled
     # (LeWM paper Section 3 — LayerNorm prevents the anti-collapse
     # objective from being optimized). Default 'layer' reproduces the
     # frozen baseline exactly.
-    projector_norm = cfg.get("projector", {}).get("norm_type", "layer")
+    projector_norm = str(projector_cfg.get("norm_type", "layer")).lower()
     if projector_norm not in ("layer", "batch"):
         raise ValueError(
             f"projector.norm_type must be 'layer' or 'batch', got '{projector_norm}'"
         )
-    if sigreg_weight > 0 and projector_norm != "batch":
+    freeze_visual_cfg = bool(cfg.get("vision_encoder", {}).get("freeze", False))
+    if sigreg_weight > 0 and projector_type == "identity" and freeze_visual_cfg:
+        raise ValueError(
+            "SIGReg with a frozen visual encoder requires a trainable MLP "
+            "projector; projector.type='identity' would make SIGReg constant."
+        )
+    if sigreg_weight > 0 and projector_type == "mlp" and projector_norm != "batch":
         raise ValueError(
             f"sigreg_weight={sigreg_weight} > 0 requires projector.norm_type='batch'. "
             f"Got '{projector_norm}'. LeWM paper Section 3: LayerNorm projector "
@@ -411,6 +462,28 @@ def run(cfg):
     ).lower()
     patch_sp = _cfg_bool(visual_cfg.get("patch_sp", False), name="visual_tokens.patch_sp")
     patch_sp_weight = float(visual_cfg.get("patch_sp_weight", 1.0))
+    sp_target_space = str(visual_cfg.get("sp_target_space", "projected")).lower()
+    predictor_cfg = cfg.get("predictor", {}) or {}
+    configured_state_head_norm = predictor_cfg.get("state_head_norm_type", None)
+    state_head_norm_type = (
+        projector_norm
+        if configured_state_head_norm is None
+        else str(configured_state_head_norm).lower()
+    )
+    if state_head_norm_type not in {"layer", "batch"}:
+        raise ValueError(
+            "predictor.state_head_norm_type must be null, 'layer', or 'batch', got "
+            f"{configured_state_head_norm!r}"
+        )
+    if sp_target_space not in {"projected", "backbone"}:
+        raise ValueError(
+            "visual_tokens.sp_target_space must be 'projected' or 'backbone', got "
+            f"{sp_target_space!r}"
+        )
+    if sp_target_space == "backbone" and not use_state_prediction:
+        raise ValueError(
+            "visual_tokens.sp_target_space='backbone' requires loss.pred_weight > 0"
+        )
     if patch_sp and not use_state_prediction:
         raise ValueError("visual_tokens.patch_sp=True requires loss.pred_weight > 0")
     if patch_sp and visual_pool_grid <= 0:
@@ -429,7 +502,10 @@ def run(cfg):
         f"[visual_tokens] pool_grid={visual_pool_grid}, "
         f"n_visual_per_view={n_visual_per_view}, "
         f"patch_projector_norm_type={patch_projector_norm_type}, "
-        f"patch_sp={patch_sp}, patch_sp_weight={patch_sp_weight}"
+        f"patch_sp={patch_sp}, patch_sp_weight={patch_sp_weight}, "
+        f"sp_target_space={sp_target_space}, projector_type={projector_type}, "
+        f"projector_depth={projector_depth}, "
+        f"state_head_norm_type={state_head_norm_type}"
     )
 
     # Multi-GPU + plain BatchNorm = silent divergence. nn.BatchNorm1d computes
@@ -438,14 +514,23 @@ def run(cfg):
     # signal. Hard-fail rather than warn — debugging silent BN drift later
     # costs more than this guard. Setting devices=1 (or [N]) is the safe
     # path; SyncBatchNorm conversion is not yet auto-applied.
-    if projector_norm == "batch":
+    uses_batch_norm = (
+        (projector_type == "mlp" and projector_norm == "batch")
+        or (
+            projector_type == "mlp"
+            and visual_pool_grid > 0
+            and patch_projector_norm_type == "batch"
+        )
+        or (use_state_prediction and state_head_norm_type == "batch")
+    )
+    if uses_batch_norm:
         devices_cfg = cfg.trainer.get("devices", "auto")
         is_explicit_single_gpu = devices_cfg == 1 or (
             isinstance(devices_cfg, list) and len(devices_cfg) == 1
         )
         if not is_explicit_single_gpu:
             raise ValueError(
-                f"projector.norm_type='batch' is unsafe with cfg.trainer.devices="
+                "BatchNorm is unsafe with cfg.trainer.devices="
                 f"{devices_cfg!r}. BatchNorm without "
                 "torch.nn.SyncBatchNorm.convert_sync_batchnorm gives per-GPU "
                 "statistics → silent divergence across ranks. Either: "
@@ -559,7 +644,13 @@ def run(cfg):
     ##############################
 
     encoder, hidden_dim, freeze_visual_encoder = build_visual_encoder(cfg, spt)
-    embed_dim = cfg.wm.get("embed_dim", hidden_dim)
+    embed_dim = int(cfg.wm.get("embed_dim", hidden_dim))
+    if projector_type == "identity" and int(hidden_dim) != embed_dim:
+        raise ValueError(
+            "projector.type='identity' requires vision hidden_dim == wm.embed_dim, "
+            f"got hidden_dim={hidden_dim}, embed_dim={embed_dim}"
+        )
+    sp_visual_target_dim = hidden_dim if sp_target_space == "backbone" else embed_dim
 
     # ARPredictor with language + proprio support.
     # max_lang_tokens is still passed in so pos_embedding has a large-enough max_seq_len —
@@ -569,6 +660,8 @@ def run(cfg):
     # immutable (H=20 across the project); pull from data config to surface
     # mismatches loudly.
     gripper_chunk_size = chunk_size
+    predictor_kwargs = dict(cfg.predictor)
+    predictor_kwargs.pop("state_head_norm_type", None)
     predictor = ARPredictor(
         embed_dim=embed_dim,
         max_action_tokens=max_action_tokens,
@@ -576,50 +669,61 @@ def run(cfg):
         proprio_dim=proprio_dim,
         action_vocab_size=action_codec.vocab_size,
         use_state_prediction=use_state_prediction,
-        # Mirror the encoder-side projector's norm choice — paper Section 3
-        # says the predictor projector has the "same implementation as the
-        # one used for the encoder", so when the encoder projector is BN
-        # (sigreg-on path) the state heads must also be BN.
-        state_head_norm_type=projector_norm,
-        # Multi-token visual prefix. 0 = CLS-only legacy layout, matches
-        # spatial-65% / sp_sigreg-67.8% checkpoints exactly.
+        state_head_norm_type=state_head_norm_type,
+        # Multi-token visual prefix; 0 retains the CLS-only checkpoint layout.
         visual_pool_grid=visual_pool_grid,
         state_pred_visual_tokens=patch_sp,
+        state_pred_visual_dim=sp_visual_target_dim,
         use_gripper_aux=use_gripper_aux,
         gripper_chunk_size=gripper_chunk_size,
-        **cfg.predictor,
+        **predictor_kwargs,
     )
 
-    norm_fn = torch.nn.BatchNorm1d if projector_norm == "batch" else torch.nn.LayerNorm
-    projector = MLP(
-        input_dim=hidden_dim,
-        output_dim=embed_dim,
-        hidden_dim=2048,
-        norm_fn=norm_fn,
-    )
     patch_projector = None
-    if visual_pool_grid > 0:
-        if patch_projector_norm_type == "layer":
-            patch_norm_fn = torch.nn.LayerNorm
-        elif patch_projector_norm_type == "batch":
-            patch_norm_fn = torch.nn.BatchNorm1d
-        elif patch_projector_norm_type in ("none", "identity"):
-            patch_norm_fn = None
-        else:
-            raise ValueError(
-                "visual_tokens.patch_projector_norm_type must be one of "
-                f"'layer', 'batch', or 'none', got {patch_projector_norm_type!r}"
-            )
-        patch_projector = MLP(
+    if projector_type == "identity":
+        projector = torch.nn.Identity()
+        print(
+            "[visual_tokens] using Identity projector; pooled backbone tokens "
+            "are passed directly to the predictor"
+        )
+    else:
+        norm_fn = (
+            torch.nn.BatchNorm1d
+            if projector_norm == "batch"
+            else torch.nn.LayerNorm
+        )
+        projector = MLP(
             input_dim=hidden_dim,
             output_dim=embed_dim,
             hidden_dim=2048,
-            norm_fn=patch_norm_fn,
+            norm_fn=norm_fn,
+            depth=projector_depth,
         )
-        print(
-            "[visual_tokens] using separate patch_projector; CLS projector "
-            f"norm={projector_norm}, patch projector norm={patch_projector_norm_type}"
-        )
+        if visual_pool_grid > 0:
+            if patch_projector_norm_type == "layer":
+                patch_norm_fn = torch.nn.LayerNorm
+            elif patch_projector_norm_type == "batch":
+                patch_norm_fn = torch.nn.BatchNorm1d
+            elif patch_projector_norm_type in ("none", "identity"):
+                patch_norm_fn = None
+            else:
+                raise ValueError(
+                    "visual_tokens.patch_projector_norm_type must be one of "
+                    "'layer', 'batch', or 'none', got "
+                    f"{patch_projector_norm_type!r}"
+                )
+            patch_projector = MLP(
+                input_dim=hidden_dim,
+                output_dim=embed_dim,
+                hidden_dim=2048,
+                norm_fn=patch_norm_fn,
+                depth=projector_depth,
+            )
+            print(
+                "[visual_tokens] using separate patch_projector; CLS projector "
+                f"norm={projector_norm}, patch projector "
+                f"norm={patch_projector_norm_type}, depth={projector_depth}"
+            )
 
     if use_language:
         # T5-small encoder (frozen)
@@ -713,7 +817,7 @@ def run(cfg):
     ##########################
 
     run_id = cfg.get("subdir") or ""
-    run_dir = Path(swm.data.utils.get_cache_dir(), run_id)
+    run_dir = Path(os.environ.get("STABLEWM_HOME", "checkpoints"), run_id)
 
     # TensorBoard logger
     logger = TensorBoardLogger(str(run_dir / "tb_logs"), name="vla_baseline")
@@ -738,6 +842,7 @@ def run(cfg):
         epoch_interval=1,
         step_interval=step_save_interval,
         top_k=int(cfg.get("ckpt_top_k", 3)),
+        save_final_on_train_end=not val_indices,
     )
 
     callbacks = [object_dump_callback]

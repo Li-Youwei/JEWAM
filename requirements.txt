@@ -1,30 +1,13 @@
-# =============================================================================
-# VLA Baseline (LeWM + Dual-View + T5 Language + Proprio) — Dependencies
-# =============================================================================
-# Python 3.10
-#
-# Install ALL:  pip install -r requirements.txt
-# Or with uv:   uv pip install -r requirements.txt
-# =============================================================================
+# Training environment (Python 3.10). Install a matching torch/torchvision build
+# for your CUDA version first; see README.md. These are release compatibility
+# requirements, not a lockfile recovered from the original training machine.
+-r requirements-core.txt
 
-# --- Core (module.py, jepa.py, libero_dataset.py, eval_libero.py) ---
-torch>=2.1
-einops>=0.7
-numpy>=1.24
-h5py>=3.8
-transformers>=4.48,<5        # pinned: <4.48 missing TimmWrapperModel; >=5 breaks FAST processor
-sentencepiece>=0.1.99       # tokenizer backend for transformers
-tiktoken>=0.7               # tokenizer backend for transformers
+# 0.1.6 retains the Manager checkpoint output/resume API used by train.py.
+# 0.1.7+ changes ckpt_path to an existing input checkpoint and is incompatible.
+stable-pretraining==0.1.6
+lightning>=2.4,<3
+tensorboard>=2.12
 
-# --- Preprocessing (preprocess_libero.py) ---
-scipy>=1.10                 # DCT for FAST tokenization
-tokenizers>=0.15            # BPE tokenizer training
-
-# --- Training (train.py) ---
-# stable-worldmodel[train,env] pulls in:
-#   stable-pretraining (spt): training orchestration, ViT backbone, DataModule
-#   lightning (PyTorch Lightning): Trainer
-#   hydra-core + omegaconf: config management
-#   torchvision, timm, etc.
-stable-worldmodel[train,env]
-tensorboard>=2.12              # TensorBoard logging (replaces WandB)
+# LIBERO simulation and optional videos: requirements-eval.txt.
+# Lint and CPU checks: requirements-dev.txt.

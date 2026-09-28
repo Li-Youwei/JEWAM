@@ -1,37 +1,100 @@
-# Python
+# Python and local environments
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
 
-# OS
+# OS, editors, and local agent state
 .DS_Store
 Thumbs.db
-
-# Editor / IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Agent harness state (per-machine)
 .claude/
 .codex/
+.agents/
+/worktrees/
 
-# Local eval outputs
-abl_videos/
-*.mp4
+# Credentials and machine-local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets.*
+token.json
+tokens.json
+*_token.txt
+local.yaml
+local.yml
+# Machine metadata emitted by stable-pretraining's environment callback
+environment*.json
+requirements_frozen*.txt
 
-# Model artifacts (training output lives on the server)
-*.ckpt
+# Datasets, pretrained backbones, fitted tokenizers, and checkpoints
+/data/
+/datasets/
+/pretrained/
+/checkpoints/
+*.h5
+*.hdf5
 *.pt
+*.pth
+*.ckpt
+*.safetensors
+pytorch_model*.bin
+*.npy
+*.npz
+
+# Training/evaluation and generated artifacts
+wandb/
+logs/
 tb_logs/
-
-# Hydra runtime
+events.out.tfevents.*
 outputs/
+output/
 multirun/
-
-# Misc
+cache/
+.cache/
+.huggingface/
+abl_videos/
 *.log
+*.mp4
+*.gif
+/tmp/
+
+# Private manuscripts and submission materials (kept locally)
+/Overleaf/
+/Robio/
+/latex/
+/paper/
+*.pdf
+*.tex
+*.bib
+*.doc
+*.docx
+*.ppt
+*.pptx
+*.aux
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# External simulator checkout
+/third_party/

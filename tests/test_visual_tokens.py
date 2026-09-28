@@ -9,7 +9,7 @@ import torch
 from torch import nn
 
 from jepa import JEPA
-from module import ACTION_HEAD_SIZE, ARPredictor
+from module import ACTION_HEAD_SIZE, MLP, ARPredictor
 
 
 class FakeEncoder(nn.Module):
@@ -40,7 +40,66 @@ class RecordingProjector(nn.Module):
         return x + self.offset
 
 
+class MLPDepthTest(unittest.TestCase):
+    def test_default_depth_preserves_legacy_module_layout(self) -> None:
+        projector = MLP(input_dim=4, hidden_dim=8, output_dim=3)
+        self.assertEqual(
+            [type(layer) for layer in projector.net],
+            [nn.Linear, nn.LayerNorm, nn.GELU, nn.Linear],
+        )
+        self.assertEqual(
+            list(projector.state_dict()),
+            [
+                "net.0.weight",
+                "net.0.bias",
+                "net.1.weight",
+                "net.1.bias",
+                "net.3.weight",
+                "net.3.bias",
+            ],
+        )
+
+    def test_six_layer_projector_has_six_linear_layers(self) -> None:
+        projector = MLP(
+            input_dim=4,
+            hidden_dim=8,
+            output_dim=3,
+            norm_fn=nn.BatchNorm1d,
+            depth=6,
+        )
+        self.assertEqual(
+            sum(isinstance(layer, nn.Linear) for layer in projector.net), 6
+        )
+        self.assertEqual(
+            sum(isinstance(layer, nn.BatchNorm1d) for layer in projector.net), 5
+        )
+        self.assertEqual(tuple(projector(torch.randn(7, 4)).shape), (7, 3))
+
+
 class VisualTokenProjectionTest(unittest.TestCase):
+    def test_identity_projector_returns_raw_pooled_backbone_tokens(self) -> None:
+        model = JEPA(
+            encoder=FakeEncoder(hidden_dim=4, n_patches=16),
+            predictor=nn.Identity(),
+            projector=nn.Identity(),
+            patch_projector=None,
+            visual_pool_grid=2,
+        )
+        pixels_agent = torch.zeros(2, 3, 224, 224)
+        pixels_hand = torch.zeros(2, 3, 224, 224)
+
+        z_agent, z_hand, _, _ = model.encode(pixels_agent, pixels_hand)
+        raw_agent, raw_hand = model.encode_future_visual(
+            pixels_agent,
+            pixels_hand,
+            return_all_tokens=True,
+            output_space="backbone",
+        )
+
+        self.assertEqual(tuple(z_agent.shape), (2, 5, 4))
+        self.assertTrue(torch.equal(z_agent, raw_agent))
+        self.assertTrue(torch.equal(z_hand, raw_hand))
+
     def test_cls_and_patch_projectors_are_not_mixed(self) -> None:
         cls_projector = RecordingProjector(offset=100.0)
         patch_projector = RecordingProjector(offset=1000.0)
@@ -78,6 +137,17 @@ class VisualTokenProjectionTest(unittest.TestCase):
         )
         self.assertEqual(tuple(future_agent_tokens.shape), (2, 5, 4))
         self.assertEqual(tuple(future_hand_tokens.shape), (2, 5, 4))
+        self.assertEqual(cls_projector.calls, [(4, 4), (4, 4), (4, 4)])
+        self.assertEqual(patch_projector.calls, [(16, 4), (16, 4)])
+
+        raw_agent_tokens, raw_hand_tokens = model.encode_future_visual(
+            pixels_agent,
+            pixels_hand,
+            return_all_tokens=True,
+            output_space="backbone",
+        )
+        self.assertEqual(tuple(raw_agent_tokens.shape), (2, 5, 4))
+        self.assertEqual(tuple(raw_hand_tokens.shape), (2, 5, 4))
         self.assertEqual(cls_projector.calls, [(4, 4), (4, 4), (4, 4)])
         self.assertEqual(patch_projector.calls, [(16, 4), (16, 4)])
 
@@ -122,6 +192,56 @@ class VisualTokenProjectionTest(unittest.TestCase):
         self.assertEqual(tuple(pred_ag.shape), (B, N, D))
         self.assertEqual(tuple(pred_hd.shape), (B, N, D))
         self.assertEqual(tuple(pred_pr.shape), (B, 9))
+
+    def test_patch_state_prediction_can_target_backbone_dimension(self) -> None:
+        torch.manual_seed(0)
+        batch_size, embed_dim, target_dim, n_tokens = 2, 16, 24, 5
+        predictor = ARPredictor(
+            embed_dim=embed_dim,
+            depth=1,
+            heads=2,
+            dim_head=8,
+            mlp_dim=32,
+            max_action_tokens=6,
+            max_lang_tokens=4,
+            proprio_dim=9,
+            dropout=0.0,
+            emb_dropout=0.0,
+            use_state_prediction=True,
+            visual_pool_grid=2,
+            state_pred_visual_tokens=True,
+            state_pred_visual_dim=target_dim,
+        )
+
+        outputs = predictor(
+            torch.randn(batch_size, n_tokens, embed_dim),
+            torch.randn(batch_size, n_tokens, embed_dim),
+            torch.randn(batch_size, 9),
+            torch.randn(batch_size, 4, embed_dim),
+            torch.tensor([4, 2]),
+            torch.randint(0, 100, (batch_size, 6)),
+            torch.tensor([4, 5]),
+        )
+        _, pred_ag, pred_hd, _ = outputs
+        self.assertEqual(tuple(pred_ag.shape), (batch_size, n_tokens, target_dim))
+        self.assertEqual(tuple(pred_hd.shape), (batch_size, n_tokens, target_dim))
+
+    def test_state_prediction_head_norm_is_independent(self) -> None:
+        predictor = ARPredictor(
+            embed_dim=16,
+            depth=1,
+            heads=2,
+            dim_head=8,
+            mlp_dim=32,
+            max_action_tokens=6,
+            max_lang_tokens=4,
+            proprio_dim=9,
+            use_state_prediction=True,
+            state_head_norm_type="batch",
+        )
+        self.assertIsInstance(predictor.state_pred_head_ag.net[1], nn.BatchNorm1d)
+        self.assertIsInstance(predictor.state_pred_head_hd.net[1], nn.BatchNorm1d)
+        self.assertIsInstance(predictor.state_pred_head_pr.net[1], nn.BatchNorm1d)
 
     def test_multi_visual_token_predictor_requires_grid_layout(self) -> None:
         with self.assertRaisesRegex(ValueError, "visual_pool_grid > 0"):

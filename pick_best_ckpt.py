@@ -6,15 +6,15 @@ minimized. Maps each step to the matching ``lewm_step_<N>_object.ckpt`` on
 disk.
 
 Usage:
-    python pick_best_ckpt.py --ckpt-dir /Data/lyw/stable-wm/all4_sp_sigreg_seed3072 --top-k 1
+    python pick_best_ckpt.py --ckpt-dir checkpoints/full_seed3072 --top-k 1
 
 Output (JSON to stdout):
     {
       "metric": "validate/ce_loss_taskbal",
-      "top_1": "/Data/lyw/stable-wm/.../lewm_step_56000_object.ckpt",
+      "top_1": "checkpoints/full_seed3072/lewm_step_56000_object.ckpt",
       "top_1_value": 0.4123,
       "all": [
-        {"rank": 1, "step": 56000, "value": 0.4123, "ckpt": "/Data/lyw/.../lewm_step_56000_object.ckpt"},
+        {"rank": 1, "step": 56000, "value": 0.4123, "ckpt": ".../lewm_step_56000_object.ckpt"},
         ...
       ]
     }
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -121,8 +122,8 @@ def main() -> int:
         )
         return 3
 
-    # Skip step 0 (Lightning sanity-check val pass) and any non-positive values.
-    series = [(s, v) for s, v in series if s > 0 and v == v]  # NaN-skip via v==v
+    # Skip step 0 (Lightning sanity-check val pass) and NaN scalar values.
+    series = [(s, v) for s, v in series if s > 0 and not math.isnan(v)]
     if not series:
         print(
             json.dumps({"error": "Series empty after filtering step>0"}, indent=2),

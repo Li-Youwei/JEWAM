@@ -7,11 +7,11 @@ worth of samples via WeightedRandomSampler, then reports:
   - Pass/fail: CV < 5% per-task AND per-suite within ±1pp of 25%.
 
 The intent is to catch sampler weight bugs (e.g., wrong dict keys, missing
-demos) BEFORE kicking off a 17h training run.
+demos) before starting training.
 
 Usage:
     python verify_sampler_balance.py \\
-        --hdf5-dir /Data/lyw/libero_processed_v5/all4_flat \\
+        --hdf5-dir data/libero_processed/all4_flat \\
         --num-epochs 1
 """
 
@@ -37,8 +37,8 @@ SUITE_PREFIXES = ("spatial", "object", "goal", "10")
 def classify_suite(stem: str) -> str:
     """Map a flat-dir filename stem to one of the four suite prefixes.
 
-    Files are named like ``spatial_pick_up_the_black_bowl_xxx`` (after Phase 3
-    symlinking). Empty string if no prefix matches.
+    Supports legacy flat filenames such as ``spatial_pick_up_the_black_bowl``.
+    Returns an empty string if no prefix matches.
     """
     stem_l = stem.lower()
     for prefix in SUITE_PREFIXES:
@@ -104,7 +104,10 @@ def main() -> int:
     # Build a suite classification per task_id (matching dataset's sorted file order).
     suite_of_task: list[str] = []
     for fpath in dataset.files:
-        suite = classify_suite(fpath.stem)
+        parent_suite = fpath.resolve().parent.name.removeprefix("libero_")
+        suite = (
+            parent_suite if parent_suite in SUITE_PREFIXES else classify_suite(fpath.stem)
+        )
         suite_of_task.append(suite)
     n_per_suite_tasks = Counter(suite_of_task)
     logger.info("Suite task counts: %s", dict(n_per_suite_tasks))

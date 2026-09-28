@@ -6,7 +6,7 @@ import unittest
 
 import torch
 
-from module import ACTION_HEAD_SIZE, ARPredictor, MoTBlock, PAD_TOKEN_ID
+from module import ACTION_HEAD_SIZE, PAD_TOKEN_ID, ARPredictor, MoTBlock
 
 
 class MoTPredictorTest(unittest.TestCase):
@@ -64,12 +64,17 @@ class MoTPredictorTest(unittest.TestCase):
 
     def test_mot_keeps_global_cross_modality_attention_path(self) -> None:
         predictor = self._make_predictor()
-        logits, pred_ag, pred_hd, pred_pr = predictor(*self._make_inputs())
+        logits, _pred_ag, _pred_hd, _pred_pr = predictor(*self._make_inputs())
         logits.sum().backward()
         self.assertTrue(
-            any(p.grad is not None for p in predictor.blocks[0].attn.to_qkv[1].parameters())
+            any(
+                p.grad is not None
+                for p in predictor.blocks[0].attn.to_qkv[1].parameters()
+            )
         )
-        self.assertTrue(any(p.grad is not None for p in predictor.blocks[0].mlp[3].parameters()))
+        self.assertTrue(
+            any(p.grad is not None for p in predictor.blocks[0].mlp[3].parameters())
+        )
 
     def test_mot_can_run_without_state_prediction(self) -> None:
         predictor = ARPredictor(

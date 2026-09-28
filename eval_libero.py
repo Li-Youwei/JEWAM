@@ -1,4 +1,4 @@
-"""LIBERO evaluation: VLA baseline — autoregressive action generation → environment execution.
+"""LIBERO evaluation: autoregressive action generation and closed-loop execution.
 
 Loads a trained checkpoint, runs the model in LIBERO environments, and
 measures task success rate. The model takes dual-view images, proprioception,
@@ -7,19 +7,19 @@ and language instruction as input.
 Usage:
     # Single task
     python eval_libero.py \
-        --checkpoint /Data/lyw/stable-wm/lewm_weights.ckpt \
-        --tokenizer /Data/lyw/fast_tokenizer \
-        --processed-dir /Data/lyw/libero_processed/libero_90 \
+        --checkpoint checkpoints/full/lewm_step_100000_object.ckpt \
+        --tokenizer data/fast_tokenizer \
+        --processed-dir data/libero_processed/libero_spatial \
         --suite libero_spatial --task-id 0 \
-        --num-episodes 20
+        --num-episodes 50
 
     # All tasks in a suite
     python eval_libero.py \
-        --checkpoint /Data/lyw/stable-wm/lewm_weights.ckpt \
-        --tokenizer /Data/lyw/fast_tokenizer \
-        --processed-dir /Data/lyw/libero_processed/libero_90 \
+        --checkpoint checkpoints/full/lewm_step_100000_object.ckpt \
+        --tokenizer data/fast_tokenizer \
+        --processed-dir data/libero_processed/libero_spatial \
         --suite libero_spatial \
-        --num-episodes 20
+        --num-episodes 50
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import h5py
 import numpy as np
@@ -41,8 +42,8 @@ except ImportError:
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 
-from libero.libero import benchmark, get_libero_path
-from libero.libero.envs import OffScreenRenderEnv
+if TYPE_CHECKING:
+    from libero.libero.envs import OffScreenRenderEnv
 
 from action_codec import (
     FAST_CODEC,
@@ -54,6 +55,16 @@ from action_codec import (
 from fast_utils import denormalize_actions, load_fast_processor
 from libero_dataset import _preprocess_image
 from preprocess_libero import normalize_proprio
+
+OPENVLA_NUM_TRIALS_PER_TASK = 50
+OPENVLA_DUMMY_WAIT_STEPS = 10
+OPENVLA_LIBERO_MAX_STEPS = {
+    "libero_spatial": 220,
+    "libero_object": 280,
+    "libero_goal": 300,
+    "libero_10": 520,
+    "libero_90": 400,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +89,7 @@ def build_model(
     import stable_pretraining as spt
 
     from jepa import JEPA
-    from module import ARPredictor, MLP
+    from module import MLP, ARPredictor
 
     encoder = spt.backbone.utils.vit_hf(
         "tiny",
@@ -507,6 +518,28 @@ def _execute_chunk_closed_loop(
     return obs, reward, done, info
 
 
+def _dummy_wait(
+    env: OffScreenRenderEnv,
+    obs: dict,
+    num_steps_wait: int,
+    action_dim: int,
+    frames: list[np.ndarray] | None,
+) -> tuple[dict, float, bool, dict]:
+    """Run OpenVLA-style no-op wait steps before policy rollout."""
+    reward = 0.0
+    done = False
+    info: dict = {}
+    wait_action = np.zeros(action_dim, dtype=np.float32)
+    wait_action[-1] = -1.0
+    for _ in range(num_steps_wait):
+        obs, reward, done, info = env.step(wait_action)
+        if frames is not None:
+            frames.append(obs["agentview_image"])
+        if done:
+            break
+    return obs, reward, done, info
+
+
 @torch.no_grad()
 def evaluate_task(
     model: torch.nn.Module,
@@ -523,6 +556,7 @@ def evaluate_task(
     *,
     num_episodes: int = 20,
     max_steps: int = 300,
+    num_steps_wait: int = OPENVLA_DUMMY_WAIT_STEPS,
     img_size: int = 224,
     max_lang_tokens: int = 25,
     device: torch.device = torch.device("cuda"),
@@ -553,89 +587,106 @@ def evaluate_task(
         lang_ids, lang_mask = None, None
 
     for ep in range(num_episodes):
-        # Reset with deterministic initial state
-        env.reset()
-        init_idx = ep % len(init_states)
-        obs = env.set_init_state(init_states[init_idx])
-
-        # Collect frames for video (first N episodes only)
         recording = save_videos and ep < max_video_episodes
         frames: list[np.ndarray] | None = [] if recording else None
-        if recording:
-            frames.append(obs["agentview_image"])
-
-        reward = 0.0
         done = False
-        for _ in range(max_chunks):
-            # Preprocess observation (dual-view + proprio)
-            pixels_agent, pixels_hand, proprio = preprocess_obs(obs, img_size, device)
+        failure_reason = "max_steps_exceeded"
 
-            # Encode visual + language
-            z_agent, z_hand, lang_embeds, lang_lengths = model.encode(
-                pixels_agent,
-                pixels_hand,
-                lang_ids,
-                lang_mask,
+        try:
+            # Reset with deterministic initial state.
+            env.reset()
+            init_idx = ep % len(init_states)
+            obs = env.set_init_state(init_states[init_idx])
+
+            # Collect frames for video (first N episodes only).
+            if recording:
+                frames.append(obs["agentview_image"])
+
+            # OpenVLA-style settling steps before starting policy actions.
+            obs, _reward, done, _ = _dummy_wait(
+                env,
+                obs,
+                num_steps_wait,
+                action_dim,
+                frames,
             )
 
-            # Generate action tokens
-            tokens, lengths = model.predict_actions(
-                z_agent,
-                z_hand,
-                proprio,
-                lang_embeds,
-                lang_lengths,
-                temperature=temperature,
-            )
+            for _ in range(max_chunks):
+                if done:
+                    break
 
-            # Decode tokens → normalized → physical anchor-relative displacements
-            actions_norm = action_codec.decode(
-                tokens,
-                lengths,
-                processor=processor,
-                time_horizon=chunk_size,
-                action_dim=action_dim,
-            )
-            actions_phys = denormalize_actions(actions_norm, action_low, action_high)
-            # actions_phys[0] is (H, 7) in physical units:
-            #   [0:3] = anchor-relative pos delta (m)
-            #   [3:6] = anchor-relative rot delta (rad, axis-angle)
-            #   [6]   = gripper cmd (unchanged)
+                # Preprocess observation (dual-view + proprio)
+                pixels_agent, pixels_hand, proprio = preprocess_obs(obs, img_size, device)
 
-            # Gripper aux override: when the model was trained with the
-            # auxiliary gripper-command head, bypass FAST for dim 6 and
-            # take the direct regression head's output instead. This
-            # addresses the libero_object 0% failure where FAST joint BPE
-            # diluted the gripper signal — see AGENTS.md diagnostic notes.
-            if getattr(model.predictor, "use_gripper_aux", False):
-                pred_grip = model.predict_gripper_aux(
+                # Encode visual + language
+                z_agent, z_hand, lang_embeds, lang_lengths = model.encode(
+                    pixels_agent,
+                    pixels_hand,
+                    lang_ids,
+                    lang_mask,
+                )
+
+                # Generate action tokens
+                tokens, lengths = model.predict_actions(
                     z_agent,
                     z_hand,
                     proprio,
                     lang_embeds,
                     lang_lengths,
-                )  # (B=1, H)
-                actions_phys[0, :, 6] = _denormalize_gripper_aux(
-                    pred_grip[0].detach().cpu().numpy(),
-                    action_low,
-                    action_high,
+                    temperature=temperature,
                 )
 
-            obs, reward, done, _ = _execute_chunk_closed_loop(
-                env,
-                obs,
-                actions_phys[0],
-                pos_scale,
-                rot_scale,
-                frames,
-            )
-            if done:
-                break
+                # Decode tokens → normalized → physical anchor-relative displacements
+                actions_norm = action_codec.decode(
+                    tokens,
+                    lengths,
+                    processor=processor,
+                    time_horizon=chunk_size,
+                    action_dim=action_dim,
+                )
+                actions_phys = denormalize_actions(actions_norm, action_low, action_high)
+                # actions_phys[0] is (H, 7) in physical units:
+                #   [0:3] = anchor-relative pos delta (m)
+                #   [3:6] = anchor-relative rot delta (rad, axis-angle)
+                #   [6]   = gripper cmd (unchanged)
 
-        success = reward > 0
+                # Gripper aux override: when the model was trained with the
+                # auxiliary gripper-command head, bypass FAST for dim 6 and
+                # take the direct regression head's output instead. This
+                # uses the checkpoint’s explicit auxiliary gripper head.
+                if getattr(model.predictor, "use_gripper_aux", False):
+                    pred_grip = model.predict_gripper_aux(
+                        z_agent,
+                        z_hand,
+                        proprio,
+                        lang_embeds,
+                        lang_lengths,
+                    )  # (B=1, H)
+                    actions_phys[0, :, 6] = _denormalize_gripper_aux(
+                        pred_grip[0].detach().cpu().numpy(),
+                        action_low,
+                        action_high,
+                    )
+
+                obs, _reward, done, _ = _execute_chunk_closed_loop(
+                    env,
+                    obs,
+                    actions_phys[0],
+                    pos_scale,
+                    rot_scale,
+                    frames,
+                )
+                if done:
+                    break
+        except Exception as exc:
+            done = False
+            failure_reason = f"exception: {exc}"
+
+        success = bool(done)
         if success:
             successes += 1
-        print(f"  Episode {ep}: {'SUCCESS' if success else 'FAIL'}")
+        status = "SUCCESS" if success else f"FAIL ({failure_reason})"
+        print(f"  Episode {ep}: {status}")
 
         # Save video
         if recording and frames and video_dir is not None:
@@ -675,7 +726,7 @@ def _save_video(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="LIBERO VLA baseline evaluation")
+    parser = argparse.ArgumentParser(description="JEWAM LIBERO rollout evaluation")
     parser.add_argument(
         "--checkpoint",
         type=str,
@@ -726,10 +777,28 @@ def main():
         help="Single task index (0-9). Omit to run all tasks in suite",
     )
     parser.add_argument(
-        "--num-episodes", type=int, default=20, help="Episodes per task"
+        "--num-episodes",
+        "--num-trials-per-task",
+        dest="num_episodes",
+        type=int,
+        default=OPENVLA_NUM_TRIALS_PER_TASK,
+        help="Episodes/rollouts per task. OpenVLA LIBERO default: 50.",
     )
     parser.add_argument(
-        "--max-steps", type=int, default=300, help="Max raw steps per episode"
+        "--max-steps",
+        type=int,
+        default=None,
+        help=(
+            "Max raw steps per episode. Default matches OpenVLA LIBERO "
+            "suite horizons: spatial=220, object=280, goal=300, libero_10=520, "
+            "libero_90=400."
+        ),
+    )
+    parser.add_argument(
+        "--num-steps-wait",
+        type=int,
+        default=OPENVLA_DUMMY_WAIT_STEPS,
+        help="OpenVLA-style no-op wait steps after setting the initial state.",
     )
     parser.add_argument(
         "--camera-size",
@@ -747,12 +816,12 @@ def main():
     parser.add_argument(
         "--save-videos",
         action="store_true",
-        help="Save rollout videos for first 3 episodes per task",
+        help="Save rollout videos (limited by --max-video-episodes)",
     )
     parser.add_argument(
         "--video-dir",
         type=str,
-        default="/Data/lyw/eval_videos",
+        default="outputs/eval_videos",
         help="Directory to save videos",
     )
     parser.add_argument(
@@ -769,10 +838,16 @@ def main():
     )
     args = parser.parse_args()
 
+    # Delay simulator initialization so imports and --help work without LIBERO.
+    from libero.libero import benchmark, get_libero_path
+    from libero.libero.envs import OffScreenRenderEnv
+
     if args.save_videos and iio is None:
         raise ImportError(
             "imageio required for --save-videos: pip install imageio imageio-ffmpeg"
         )
+    if args.max_steps is None:
+        args.max_steps = OPENVLA_LIBERO_MAX_STEPS[args.suite]
 
     use_language = not args.no_language
 
@@ -855,6 +930,11 @@ def main():
         f"Using action codec: {action_codec.name} "
         f"(vocab_size={action_codec.vocab_size})"
     )
+    print(
+        f"Eval rollouts: {args.num_episodes} per task; "
+        f"max_steps={args.max_steps} for {args.suite}; "
+        f"num_steps_wait={args.num_steps_wait}"
+    )
 
     # Load T5 tokenizer for language (skipped in no-language mode)
     t5_tokenizer = T5Tokenizer.from_pretrained("t5-small") if use_language else None
@@ -925,6 +1005,7 @@ def main():
                 language_instruction,
                 num_episodes=args.num_episodes,
                 max_steps=args.max_steps,
+                num_steps_wait=args.num_steps_wait,
                 device=device,
                 temperature=args.temperature,
                 save_videos=args.save_videos,
