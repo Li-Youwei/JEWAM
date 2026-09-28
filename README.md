@@ -1,6 +1,6 @@
 # JEWAM
 
-**Joint-Embedding World Action Model** is the repository name for the method in
+**JEWAM (Joint-Embedding World Action Model)** implements the method in
 *Autoregressive World Action Model with a Joint-Embedding Predictive Architecture*.
 The policy learns robot manipulation from the 40 tasks in four LIBERO suites,
 without robot-data pretraining. It predicts FAST action tokens from two RGB
@@ -66,8 +66,11 @@ environment.yml           Python 3.10 training environment
 
 Core Python modules intentionally remain at the repository root: existing
 `_object.ckpt` files record paths such as `jepa.JEPA`, `module.ARPredictor`, and
-`vision_backbone.HFVisionBackbone`. The `lewm` checkpoint filename prefix and
-base config name remain compatible with saved experiments.
+`vision_backbone.HFVisionBackbone`. New runs use the `jewam` checkpoint prefix
+and write TensorBoard events under `tb_logs/jewam/`. Existing object checkpoints
+still load regardless of their filename prefix; checkpoint ranking also reads
+existing TensorBoard log directories. Use `JEWAM_HOME` to override the checkpoint
+root when invoking `train.py` directly.
 
 ## Installation
 
@@ -216,8 +219,9 @@ python train.py --config-name=jewam train_split=1 \
   subdir=full_all_data +trainer.limit_val_batches=0
 ```
 
-`config/train/lewm.yaml` remains a compatible base, not the paper full-model
-preset. `config/train/overfit.yaml` is a small-data pipeline diagnostic.
+`config/train/base.yaml` supplies shared defaults and remains the default
+for bare `python train.py` calls. Select `--config-name=jewam` for the full model
+as shown above. `config/train/overfit.yaml` is a small-data pipeline diagnostic.
 
 ### Paper ablations
 
@@ -258,7 +262,7 @@ path supports the legacy CLS-only baseline, not the full architecture.
 
 ```bash
 python eval_libero.py \
-  --checkpoint checkpoints/full_all_data/lewm_step_100000_object.ckpt \
+  --checkpoint checkpoints/full_all_data/jewam_step_100000_object.ckpt \
   --tokenizer data/fast_tokenizer \
   --processed-dir data/libero_processed/libero_spatial \
   --suite libero_spatial --num-episodes 50 --seed 3072 --device cuda
@@ -276,7 +280,7 @@ EVAL_ONLY=true ARM=full TRAIN_SPLIT=1 RUN_NAME=full_all_data \
   bash scripts/train_eval.sh
 python aggregate_all4_results.py \
   --ckpt-dir checkpoints/full_all_data \
-  --checkpoint-stem lewm_step_100000_object
+  --checkpoint-stem jewam_step_100000_object
 ```
 
 For a split run, omit `TRAIN_SPLIT=1`; checkpoint selection requires its original
@@ -310,7 +314,10 @@ not a published venue or DOI claim.
 
 ## Acknowledgements and license
 
-This work builds on LeWorldModel/LeJEPA, stable-pretraining,
-[DINOv2](https://github.com/facebookresearch/dinov2), T5, FAST, and LIBERO.
-The inherited MIT license and copyright notice are preserved in [LICENSE](LICENSE).
-Datasets, pretrained backbones, and external dependencies retain their own licenses.
+JEWAM uses stable-pretraining for the training loop,
+[DINOv2](https://github.com/facebookresearch/dinov2) and T5 for frozen features,
+FAST for action tokenization, and LIBERO for demonstrations and evaluation.
+The code is distributed under the [MIT license](LICENSE). The copyright notice
+for inherited SIGReg and basic neural-network utilities is retained alongside
+the JEWAM contributors' notice. Datasets, pretrained backbones, and external
+dependencies retain their own licenses.

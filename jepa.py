@@ -1,4 +1,4 @@
-"""JEPA Implementation — VLA baseline with dual-view + language + proprioception."""
+"""JEWAM policy container with dual-view vision, language, and proprioception."""
 
 import torch
 from torch import nn
@@ -161,12 +161,9 @@ class JEPA(nn.Module):
         """Encode future-frame visual inputs through the shared ViT.
 
         Used by the state-prediction branch (``use_state_prediction=True``).
-        Following LeWM paper Section 3 — "We do not employ stop-gradient,
-        exponential moving averages, or additional stabilization heuristics.
-        Gradients are propagated through all components of the loss" — this
-        method does NOT call ``.detach()`` on its outputs. The caller
-        (train.py) must also avoid stop-grad. SIGReg on the encoder outputs
-        is what prevents collapse, not stop-gradient.
+        Future targets retain gradients through the shared trainable
+        projectors. Neither this method nor the training loss detaches them.
+        SIGReg regularizes the current and future CLS embeddings.
 
         Performance note: same cat-then-split optimization as ``encode()``;
         the two future views go through the ViT in one forward pass. Total

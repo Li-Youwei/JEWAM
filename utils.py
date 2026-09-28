@@ -84,7 +84,7 @@ class ModelObjectCallBack(Callback):
         path = self.dirpath / f"{self.filename}_step_{step}_object.ckpt"
         self._dump_model(pl_module.model, path)
         self._update_top_k(score, step, path)
-        # Re-point `lewm_latest_object.ckpt` at the highest-step file still on
+        # Re-point `<model_name>_latest_object.ckpt` at the highest-step file still on
         # disk after eviction. Previously the symlink was always set to the
         # just-saved `path`, which left a dangling symlink whenever top-K
         # evicted that file (e.g., when the latest step had the worst val CE
@@ -152,7 +152,7 @@ class TaskBalancedCEMetric(Callback):
     """At validation epoch end, mean the per-task val CE scalars into
     ``validate/ce_loss_taskbal``.
 
-    `lejepa_forward` logs ``validate/ce_loss/task_<i>`` per task that appeared
+    `jewam_forward` logs ``validate/ce_loss/task_<i>`` per task that appeared
     in the validation set. Here we aggregate those (each task weighted equally)
     so the saved scalar is robust to suite size imbalance — critical under
     4-suite joint training where some tasks have ~3× more val samples than
@@ -197,7 +197,7 @@ class PeriodicPrintCallback(Callback):
     Args:
         every_n_epochs: print cadence in epochs.
         keys: metric keys to print. Missing keys are silently skipped. The
-              default matches the keys logged by `lejepa_forward` in train.py.
+              default matches the keys logged by `jewam_forward` in train.py.
         tag: short prefix shown at the start of each line.
     """
 

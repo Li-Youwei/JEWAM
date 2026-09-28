@@ -240,7 +240,7 @@ CKPT_DIR="${CKPT_ROOT}/${RUN_NAME}"
 
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
-export STABLEWM_HOME="$CKPT_DIR"
+export JEWAM_HOME="$CKPT_DIR"
 
 resolve_eval_max_steps() {
     local suite="$1"
@@ -263,20 +263,20 @@ resolve_eval_max_steps() {
 }
 
 echo "=========================================================="
-echo "[all4_pretrained_vision] ARM=$ARM STATE_ARCH=$STATE_ARCH SEED=$SEED MAX_STEPS=$MAX_STEPS"
-echo "[all4_pretrained_vision] EVAL_ONLY=$EVAL_ONLY TRAIN_SPLIT=$TRAIN_SPLIT"
-echo "[all4_pretrained_vision] PRED=$PRED SIGREG=$SIGREG NORM=$NORM"
-echo "[all4_pretrained_vision] PROJECTOR_TYPE=$PROJECTOR_TYPE PROJECTOR_DEPTH=$PROJECTOR_DEPTH EMBED_DIM=$EMBED_DIM STATE_HEAD_NORM=$STATE_HEAD_NORM PATCH_PROJECTOR_NORM=$PATCH_PROJECTOR_NORM"
-echo "[all4_pretrained_vision] POOL_GRID=$POOL_GRID PATCH_SP=$PATCH_SP PATCH_SP_WEIGHT=$PATCH_SP_WEIGHT SP_TARGET_SPACE=$SP_TARGET_SPACE"
-echo "[all4_pretrained_vision] BATCH_SIZE=$BATCH_SIZE GRAD_ACCUM_STEPS=$GRAD_ACCUM_STEPS EFFECTIVE_BATCH_SIZE=$EFFECTIVE_BATCH_SIZE"
-echo "[all4_pretrained_vision] FLAT_DIR=$FLAT_DIR"
-echo "[all4_pretrained_vision] TOKENIZER=$TOKENIZER"
-echo "[all4_pretrained_vision] PROCESSED_ROOT=$PROCESSED_ROOT"
-echo "[all4_pretrained_vision] VISION_ENCODER=$VISION_ENCODER"
-echo "[all4_pretrained_vision] CKPT_DIR=$CKPT_DIR"
-echo "[all4_pretrained_vision] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}"
-echo "[all4_pretrained_vision] CKPT_SAVE_TOP_K=$CKPT_SAVE_TOP_K CKPT_SELECT_TOP_K=$CKPT_SELECT_TOP_K FINAL_EVAL_EPISODES=$FINAL_EVAL_EPISODES FINAL_EVAL_MAX_STEPS=$FINAL_EVAL_MAX_STEPS EVAL_NUM_STEPS_WAIT=$EVAL_NUM_STEPS_WAIT"
-echo "[all4_pretrained_vision] ACTION_CODEC=$ACTION_CODEC NUM_ACTION_BINS=$NUM_ACTION_BINS MAX_ACTION_TOKENS=$MAX_ACTION_TOKENS"
+echo "[JEWAM] ARM=$ARM STATE_ARCH=$STATE_ARCH SEED=$SEED MAX_STEPS=$MAX_STEPS"
+echo "[JEWAM] EVAL_ONLY=$EVAL_ONLY TRAIN_SPLIT=$TRAIN_SPLIT"
+echo "[JEWAM] PRED=$PRED SIGREG=$SIGREG NORM=$NORM"
+echo "[JEWAM] PROJECTOR_TYPE=$PROJECTOR_TYPE PROJECTOR_DEPTH=$PROJECTOR_DEPTH EMBED_DIM=$EMBED_DIM STATE_HEAD_NORM=$STATE_HEAD_NORM PATCH_PROJECTOR_NORM=$PATCH_PROJECTOR_NORM"
+echo "[JEWAM] POOL_GRID=$POOL_GRID PATCH_SP=$PATCH_SP PATCH_SP_WEIGHT=$PATCH_SP_WEIGHT SP_TARGET_SPACE=$SP_TARGET_SPACE"
+echo "[JEWAM] BATCH_SIZE=$BATCH_SIZE GRAD_ACCUM_STEPS=$GRAD_ACCUM_STEPS EFFECTIVE_BATCH_SIZE=$EFFECTIVE_BATCH_SIZE"
+echo "[JEWAM] FLAT_DIR=$FLAT_DIR"
+echo "[JEWAM] TOKENIZER=$TOKENIZER"
+echo "[JEWAM] PROCESSED_ROOT=$PROCESSED_ROOT"
+echo "[JEWAM] VISION_ENCODER=$VISION_ENCODER"
+echo "[JEWAM] CKPT_DIR=$CKPT_DIR"
+echo "[JEWAM] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}"
+echo "[JEWAM] CKPT_SAVE_TOP_K=$CKPT_SAVE_TOP_K CKPT_SELECT_TOP_K=$CKPT_SELECT_TOP_K FINAL_EVAL_EPISODES=$FINAL_EVAL_EPISODES FINAL_EVAL_MAX_STEPS=$FINAL_EVAL_MAX_STEPS EVAL_NUM_STEPS_WAIT=$EVAL_NUM_STEPS_WAIT"
+echo "[JEWAM] ACTION_CODEC=$ACTION_CODEC NUM_ACTION_BINS=$NUM_ACTION_BINS MAX_ACTION_TOKENS=$MAX_ACTION_TOKENS"
 echo "=========================================================="
 
 [[ -d "$FLAT_DIR" ]] || { echo "ERROR: FLAT_DIR missing: $FLAT_DIR" >&2; exit 1; }
@@ -311,9 +311,9 @@ if [[ "$FULL_DATA" == "true" ]]; then
 fi
 
 if [[ "$EVAL_ONLY" == "true" || "$EVAL_ONLY" == "1" ]]; then
-    echo "[all4_pretrained_vision] EVAL_ONLY enabled; skipping training and using existing checkpoints in $CKPT_DIR"
+    echo "[JEWAM] EVAL_ONLY enabled; skipping training and using existing checkpoints in $CKPT_DIR"
 else
-    "$PYTHON" train.py \
+    "$PYTHON" train.py --config-name=base \
         data=libero \
         data.dataset.hdf5_dir="$FLAT_DIR" \
         data.dataset.max_action_tokens="$MAX_ACTION_TOKENS" \
@@ -342,7 +342,7 @@ else
         loader.batch_size="$BATCH_SIZE" \
         seed="$SEED" \
         subdir="" \
-        output_model_name=lewm \
+        output_model_name=jewam \
         +ckpt_top_k="$CKPT_SAVE_TOP_K" \
         +visual_tokens.pool_grid="$POOL_GRID" \
         +visual_tokens.patch_sp="$PATCH_SP" \
@@ -355,12 +355,25 @@ fi
 
 CANDIDATE_CKPTS=()
 if [[ "$FULL_DATA" == "true" ]]; then
-    CANDIDATE_CKPTS+=("${CKPT_DIR}/lewm_step_${MAX_STEPS}_object.ckpt")
-    echo "[all4_pretrained_vision] full-data run: evaluating the final step, without validation selection"
+    FINAL_CKPT="${CKPT_DIR}/jewam_step_${MAX_STEPS}_object.ckpt"
+    if [[ ! -f "$FINAL_CKPT" ]]; then
+        # Earlier runs may use another filename prefix; the step stays exact.
+        shopt -s nullglob
+        FINAL_MATCHES=("${CKPT_DIR}/"*_step_"${MAX_STEPS}"_object.ckpt)
+        shopt -u nullglob
+        if [[ "${#FINAL_MATCHES[@]}" -eq 1 ]]; then
+            FINAL_CKPT="${FINAL_MATCHES[0]}"
+        elif [[ "${#FINAL_MATCHES[@]}" -gt 1 ]]; then
+            echo "ERROR: multiple final-step checkpoints found in $CKPT_DIR" >&2
+            exit 2
+        fi
+    fi
+    CANDIDATE_CKPTS+=("$FINAL_CKPT")
+    echo "[JEWAM] full-data run: evaluating the final step, without validation selection"
 else
 PICK_JSON="${CKPT_DIR}/ckpt_ce_topk.json"
 PICK_OUT=$("$PYTHON" pick_best_ckpt.py --ckpt-dir "$CKPT_DIR" --top-k "$CKPT_SELECT_TOP_K")
-echo "[all4_pretrained_vision] pick_best_ckpt output:"
+echo "[JEWAM] pick_best_ckpt output:"
 echo "$PICK_OUT"
 echo "$PICK_OUT" > "$PICK_JSON"
 
@@ -393,13 +406,13 @@ for candidate_ckpt in "${CANDIDATE_CKPTS[@]}"; do
         exit 2
     fi
     candidate_stem="$(basename "$candidate_ckpt" .ckpt)"
-    echo "[all4_pretrained_vision] eval candidate: $candidate_ckpt"
+    echo "[JEWAM] eval candidate: $candidate_ckpt"
     for suite in libero_spatial libero_object libero_goal libero_10; do
         suite_max_steps="$(resolve_eval_max_steps "$suite" "$FINAL_EVAL_MAX_STEPS")"
         EVAL_LOG="${CKPT_DIR}/eval_${candidate_stem}_${suite}.log"
         PROC_DIR="${PROCESSED_ROOT}/${suite}"
         [[ -d "$PROC_DIR" ]] || { echo "ERROR: processed suite dir missing: $PROC_DIR" >&2; exit 1; }
-        echo "[all4_pretrained_vision] eval $suite episodes_per_task=$FINAL_EVAL_EPISODES max_steps=$suite_max_steps -> $EVAL_LOG"
+        echo "[JEWAM] eval $suite episodes_per_task=$FINAL_EVAL_EPISODES max_steps=$suite_max_steps -> $EVAL_LOG"
         "$PYTHON" eval_libero.py \
             --checkpoint "$candidate_ckpt" \
             --processed-dir "$PROC_DIR" \
@@ -414,4 +427,4 @@ for candidate_ckpt in "${CANDIDATE_CKPTS[@]}"; do
     done
 done
 
-echo "[all4_pretrained_vision] ALL DONE - see logs under $CKPT_DIR/"
+echo "[JEWAM] ALL DONE - see logs under $CKPT_DIR/"

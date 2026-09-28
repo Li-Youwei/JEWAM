@@ -249,7 +249,7 @@ class PipelineSmokeTest(unittest.TestCase):
 
     def test_production_joint_loss_backpropagates_with_frozen_encoders(self):
         try:
-            from train import lejepa_forward
+            from train import jewam_forward
         except ModuleNotFoundError as exc:
             if exc.name in {"hydra", "omegaconf"}:
                 self.skipTest(f"Training loss smoke requires hydra-core: {exc}")
@@ -268,7 +268,7 @@ class PipelineSmokeTest(unittest.TestCase):
             "visual_tokens": {"patch_sp": True, "patch_sp_weight": 1.0},
             "label_smoothing": 0.1,
         }
-        output = lejepa_forward(runner, self.batch, "fit", cfg)
+        output = jewam_forward(runner, self.batch, "fit", cfg)
         self.assertTrue(torch.isfinite(output["loss"]))
         torch.testing.assert_close(
             output["loss"],

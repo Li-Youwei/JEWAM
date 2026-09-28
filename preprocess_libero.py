@@ -343,7 +343,7 @@ def extract_chunks(
             samples["image_agent"].append(agent_imgs[t])  # (H_img, W_img, 3) uint8
             samples["image_hand"].append(hand_imgs[t])
 
-            # State-prediction targets at t+H (LeWM-style next-embedding loss).
+            # Future-state targets at t+H for visual and proprio prediction.
             # The chunk-validity range t <= T-H-1 already guarantees t+H <= T-1,
             # and we read up to last_obs_idx = (n_chunks-1)*stride + H above,
             # so agent_imgs[t+H] / hand_imgs[t+H] are always in-bounds here.

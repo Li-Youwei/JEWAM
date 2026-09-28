@@ -1,6 +1,6 @@
-# Paper full model; keeps lewm.yaml as the compatible base configuration.
+# Paper full model; keeps base.yaml as the compatible base configuration.
 defaults:
-  - lewm
+  - base
   - _self_
 
 subdir: jewam_seed${seed}

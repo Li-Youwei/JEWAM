@@ -1,4 +1,4 @@
-"""Visual encoder builders for LeWM LIBERO runs."""
+"""Visual encoder builders for JEWAM LIBERO runs."""
 
 from __future__ import annotations
 

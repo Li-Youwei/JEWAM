@@ -35,7 +35,7 @@ class RepositoryContractsTest(unittest.TestCase):
         self.assertIn("+visual_tokens.sp_target_space", script_text)
 
     def test_dino768_projector_ablation_contract(self) -> None:
-        config_text = (ROOT / "config/train/lewm.yaml").read_text()
+        config_text = (ROOT / "config/train/base.yaml").read_text()
         train_source = (ROOT / "train.py").read_text()
         script_text = (ROOT / "scripts/train_eval.sh").read_text()
         self.assertIn("type: mlp", config_text)
@@ -73,7 +73,7 @@ class RepositoryContractsTest(unittest.TestCase):
         )
 
     def test_dino192_six_layer_projector_arm_contract(self) -> None:
-        config_text = (ROOT / "config/train/lewm.yaml").read_text()
+        config_text = (ROOT / "config/train/base.yaml").read_text()
         script_text = (ROOT / "scripts/train_eval.sh").read_text()
         self.assertIn("depth: 2", config_text)
         self.assertIn(
@@ -219,7 +219,7 @@ class RepositoryContractsTest(unittest.TestCase):
         self.assertIn(
             'EVAL_LOG="${CKPT_DIR}/eval_${candidate_stem}_${suite}.log"', runner_source
         )
-        self.assertIn("[all4_pretrained_vision] eval candidate:", runner_source)
+        self.assertIn("[JEWAM] eval candidate:", runner_source)
         self.assertIn('FINAL_EVAL_EPISODES="${FINAL_EVAL_EPISODES:-50}"', runner_source)
         self.assertIn(
             'FINAL_EVAL_MAX_STEPS="${FINAL_EVAL_MAX_STEPS:-openvla}"', runner_source

@@ -2,7 +2,7 @@ defaults:
   - _self_
   - data: libero
 
-output_model_name: lewm
+output_model_name: jewam
 subdir: ${hydra:job.id}
 
 num_workers: 6
@@ -51,7 +51,7 @@ scheduler:
 label_smoothing: 0.1
 
 wm:
-  type: vla_baseline
+  type: jewam
   embed_dim: 192
 
 predictor:

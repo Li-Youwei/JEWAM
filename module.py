@@ -540,17 +540,9 @@ class ARPredictor(nn.Module):
             )
 
         # State-prediction read-out (only when enabled).
-        # Per LeWM paper Section 3: "The predictor is also followed by a
-        # projector network with the same implementation as the one used for
-        # the encoder" — and the encoder projector is a "1-layer MLP with
-        # BatchNorm". Upstream `train.py` confirms this with:
-        #     predictor_proj = MLP(input_dim=hidden_dim, output_dim=embed_dim,
-        #                          hidden_dim=2048, norm_fn=torch.nn.BatchNorm1d)
-        # So each per-query state head here is the SAME MLP signature, with
-        # the norm type mirroring the encoder-side projector (caller passes
-        # `state_head_norm_type` matching `cfg.projector.norm_type`).
-        # The proprio head terminates in `proprio_dim` (9 by default) because
-        # it predicts the RAW future proprio vector — not an embedding.
+        # Each query uses an MLP head with configurable normalization.
+        # Visual heads predict future visual features; the proprio head
+        # predicts the raw future proprio vector (9 dimensions by default).
         if use_state_prediction:
             if state_head_norm_type == "batch":
                 head_norm_fn = nn.BatchNorm1d
@@ -564,9 +556,7 @@ class ARPredictor(nn.Module):
 
             # 3 learnable query tokens: Q_ag, Q_hd, Q_pr (one per stream).
             self.state_query_embeddings = nn.Parameter(torch.randn(3, embed_dim))
-            # Per-stream projector: matches the encoder-side projector
-            # signature (LeWM paper Sec. 3 + upstream pattern). With
-            # state_pred_visual_tokens=True, Q_ag/Q_hd predict the full
+            # With state_pred_visual_tokens=True, Q_ag/Q_hd predict the full
             # CLS+patch token set (B, nv, D_target) instead of only CLS
             # (B, D_target), giving patch tokens a direct state-prediction
             # target. D_target can differ from the transformer embed_dim, e.g.

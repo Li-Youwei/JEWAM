@@ -38,7 +38,9 @@ restore implementations from old branches or worktrees.
 - `TRAIN_SPLIT=1` disables validation and evaluates the final fixed-budget
   object checkpoint. Only this case enables the final-save callback.
 - Keep `trainer.devices=1` for BatchNorm/SIGReg models; no SyncBatchNorm is added.
-- Legacy base config and `lewm_*_object.ckpt` filenames are intentional.
+- Use `base.yaml` for shared config defaults and `jewam.yaml` for the full
+  model. New checkpoints use `jewam_*_object.ckpt`; selection also accepts
+  existing checkpoints with other prefixes.
 - Do not change defaults or loss/data semantics merely to simplify code.
 
 ## Development
@@ -61,6 +63,6 @@ git diff --check
 Core tests and the synthetic pipeline do not need downloaded weights or LIBERO.
 Callback tests need the training dependencies. Full training and simulator
 rollouts require Linux/CUDA, real data, and pretrained assets; do not claim they
-ran when only CPU checks ran. Keep manuscripts, datasets, fitted tokenizers,
-weights, logs, and machine-local credentials out of Git. Preserve the inherited
-MIT notice.
+ran when only CPU checks ran. Use `JEWAM_HOME` to override the checkpoint root.
+Keep manuscripts, datasets, fitted tokenizers, weights, logs, and machine-local
+credentials out of Git. Preserve the inherited MIT notice.

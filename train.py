@@ -27,8 +27,8 @@ def _cfg_bool(value, *, name: str) -> bool:
     raise ValueError(f"{name} must be a boolean, got {value!r}")
 
 
-def lejepa_forward(self, batch, stage, cfg):
-    """VLA training step.
+def jewam_forward(self, batch, stage, cfg):
+    """JEWAM training step.
 
     Always computes ``L_CE`` (action token cross-entropy).
 
@@ -151,7 +151,7 @@ def lejepa_forward(self, batch, stage, cfg):
 
     total_loss = output["ce_loss"]
 
-    # 6. State-prediction loss (LeWM-style, NO stop-gradient on target).
+    # 6. State-prediction loss; future targets retain projector gradients.
     if use_state_pred:
         pixels_agent_future = batch["pixels_agent_future"]
         pixels_hand_future = batch["pixels_hand_future"]
@@ -261,14 +261,10 @@ def lejepa_forward(self, batch, stage, cfg):
 
         total_loss = total_loss + pred_weight * output["pred_loss"]
 
-    # 7. SIGReg loss (Algorithm 1 strict — encoder outputs only).
-    # The 4-stream stack maps to LeWM's `emb` over 2 timesteps × 2 views.
-    # Predictor outputs (pred_ag/pred_hd) are intentionally NOT included
-    # — see paper Algorithm 1 + upstream `train.py::lejepa_forward`.
-    # `encode()` returns (B, N, D); for SIGReg we use the CLS slice only.
-    # SIGReg remains CLS-only even when patch-level SP is enabled; patch
-    # tokens get direct supervision through the SP MSE above, while SIGReg
-    # preserves the original LeWM 4-stream embedding regularizer.
+    # 7. SIGReg uses encoder-side CLS embeddings from both views.
+    # With state prediction, include current and future frames (four streams);
+    # otherwise include only current frames (two streams). Predictor outputs
+    # and patch tokens are excluded; patches receive the SP MSE above.
     if sigreg_weight > 0:
         z_ag_cls = z_agent[:, 0] if z_agent.dim() == 3 else z_agent
         z_hd_cls = z_hand[:, 0] if z_hand.dim() == 3 else z_hand
@@ -365,7 +361,7 @@ def lejepa_forward(self, batch, stage, cfg):
     return output
 
 
-@hydra.main(version_base=None, config_path="./config/train", config_name="lewm")
+@hydra.main(version_base=None, config_path="./config/train", config_name="base")
 def run(cfg):
     import lightning as pl
     import stable_pretraining as spt
@@ -427,10 +423,8 @@ def run(cfg):
     if projector_depth < 2:
         raise ValueError(f"projector.depth must be >= 2, got {projector_depth}")
 
-    # Projector normalization: must be 'batch' when SIGReg is enabled
-    # (LeWM paper Section 3 — LayerNorm prevents the anti-collapse
-    # objective from being optimized). Default 'layer' reproduces the
-    # frozen baseline exactly.
+    # SIGReg uses BatchNorm on the trainable CLS projector. LayerNorm
+    # constrains per-sample statistics and is reserved for runs without SIGReg.
     projector_norm = str(projector_cfg.get("norm_type", "layer")).lower()
     if projector_norm not in ("layer", "batch"):
         raise ValueError(
@@ -445,9 +439,8 @@ def run(cfg):
     if sigreg_weight > 0 and projector_type == "mlp" and projector_norm != "batch":
         raise ValueError(
             f"sigreg_weight={sigreg_weight} > 0 requires projector.norm_type='batch'. "
-            f"Got '{projector_norm}'. LeWM paper Section 3: LayerNorm projector "
-            "prevents SIGReg from optimizing the latent distribution toward "
-            "isotropic Gaussian. See AGENTS.md before flipping this on."
+            f"Got '{projector_norm}'. Use BatchNorm for the CLS projector "
+            "to preserve the SIGReg training configuration."
         )
 
     # Multi-token visual prefix (CLS + grid-pooled patches). Off by default
@@ -618,7 +611,7 @@ def run(cfg):
             replacement=True,
             generator=rnd_gen,
         )
-        # cfg.loader has no `shuffle` key (verified in lewm.yaml), so passing
+        # cfg.loader has no `shuffle` key (verified in base.yaml), so passing
         # both **cfg.loader and sampler=... is safe. WeightedRandomSampler is
         # incompatible with shuffle=True.
         train = torch.utils.data.DataLoader(
@@ -801,10 +794,10 @@ def run(cfg):
 
     # SIGReg module — only constructed when enabled. spt.Module accepts
     # arbitrary kwargs and exposes them as attributes, so passing
-    # `sigreg=...` makes `self.sigreg` available inside `lejepa_forward`.
+    # `sigreg=...` makes `self.sigreg` available inside `jewam_forward`.
     spt_module_kwargs = dict(
         model=world_model,
-        forward=partial(lejepa_forward, cfg=cfg),
+        forward=partial(jewam_forward, cfg=cfg),
         optim=optimizers,
     )
     if sigreg_weight > 0:
@@ -817,10 +810,10 @@ def run(cfg):
     ##########################
 
     run_id = cfg.get("subdir") or ""
-    run_dir = Path(os.environ.get("STABLEWM_HOME", "checkpoints"), run_id)
+    run_dir = Path(os.environ.get("JEWAM_HOME", "checkpoints"), run_id)
 
     # TensorBoard logger
-    logger = TensorBoardLogger(str(run_dir / "tb_logs"), name="vla_baseline")
+    logger = TensorBoardLogger(str(run_dir / "tb_logs"), name="jewam")
 
     run_dir.mkdir(parents=True, exist_ok=True)
     with open(run_dir / "config.yaml", "w") as f:
@@ -848,7 +841,7 @@ def run(cfg):
     callbacks = [object_dump_callback]
 
     # Task-balanced val CE metric — aggregates per-task scalars logged in
-    # lejepa_forward and writes validate/ce_loss_taskbal at val end. Used by
+    # jewam_forward and writes validate/ce_loss_taskbal at val end. Used by
     # pick_best_ckpt.py for ckpt selection under joint 4-suite training.
     from utils import TaskBalancedCEMetric
 

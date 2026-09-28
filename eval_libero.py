@@ -7,7 +7,7 @@ and language instruction as input.
 Usage:
     # Single task
     python eval_libero.py \
-        --checkpoint checkpoints/full/lewm_step_100000_object.ckpt \
+        --checkpoint checkpoints/full/jewam_step_100000_object.ckpt \
         --tokenizer data/fast_tokenizer \
         --processed-dir data/libero_processed/libero_spatial \
         --suite libero_spatial --task-id 0 \
@@ -15,7 +15,7 @@ Usage:
 
     # All tasks in a suite
     python eval_libero.py \
-        --checkpoint checkpoints/full/lewm_step_100000_object.ckpt \
+        --checkpoint checkpoints/full/jewam_step_100000_object.ckpt \
         --tokenizer data/fast_tokenizer \
         --processed-dir data/libero_processed/libero_spatial \
         --suite libero_spatial \
@@ -107,7 +107,7 @@ def build_model(
         max_lang_tokens=25,
         proprio_dim=9,
         action_vocab_size=action_vocab_size,
-        # dropout=0.2 mirrors config/train/lewm.yaml (the frozen baseline's
+        # dropout=0.2 mirrors config/train/base.yaml (the frozen baseline's
         # actual training value). Eval mode is no-op for nn.Dropout, so this
         # has no inference effect, but it keeps the constructor call honest
         # and stops future maintainers from chasing a phantom mismatch when
@@ -216,7 +216,7 @@ def load_checkpoint(
             "or visual-prefix-trained) "
             "must be evaluated via the per-epoch object checkpoint produced "
             "by ModelObjectCallBack — pass "
-            "--checkpoint .../lewm_*_object.ckpt instead."
+            "--checkpoint .../jewam_*_object.ckpt instead."
         )
 
     has_lang_module = getattr(model, "lang_encoder", None) is not None

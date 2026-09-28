@@ -9,7 +9,7 @@ Without --checkpoint-stem, reads legacy ``eval_<suite>.log`` names.
 Usage:
     python aggregate_all4_results.py \\
         --ckpt-dir checkpoints/full_seed3072 \\
-        --checkpoint-stem lewm_step_100000_object \\
+        --checkpoint-stem jewam_step_100000_object \\
         --out checkpoints/full_seed3072/results.md
 """
 

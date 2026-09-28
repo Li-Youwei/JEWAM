@@ -1,8 +1,8 @@
 """pick_best_ckpt.py — Select best checkpoint(s) from a training run.
 
-Reads TB event files under ``<ckpt-dir>/tb_logs/vla_baseline/version_*/`` and
+Reads TB event files under ``<ckpt-dir>/tb_logs/<logger>/version_*/`` and
 returns the steps where ``validate/ce_loss_taskbal`` (or fallback metric) is
-minimized. Maps each step to the matching ``lewm_step_<N>_object.ckpt`` on
+minimized. Maps each step to the matching ``jewam_step_<N>_object.ckpt`` on
 disk.
 
 Usage:
@@ -11,10 +11,10 @@ Usage:
 Output (JSON to stdout):
     {
       "metric": "validate/ce_loss_taskbal",
-      "top_1": "checkpoints/full_seed3072/lewm_step_56000_object.ckpt",
+      "top_1": "checkpoints/full_seed3072/jewam_step_56000_object.ckpt",
       "top_1_value": 0.4123,
       "all": [
-        {"rank": 1, "step": 56000, "value": 0.4123, "ckpt": ".../lewm_step_56000_object.ckpt"},
+        {"rank": 1, "step": 56000, "value": 0.4123, "ckpt": ".../jewam_step_56000_object.ckpt"},
         ...
       ]
     }
@@ -31,18 +31,16 @@ from pathlib import Path
 
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
-CKPT_RE = re.compile(r"lewm_step_(\d+)_object\.ckpt$")
+CKPT_RE = re.compile(r"^.+_step_(\d+)_object\.ckpt$")
 
 
 def find_event_files(ckpt_dir: Path) -> list[Path]:
-    """Return all TB event files under <ckpt_dir>/tb_logs/vla_baseline/version_*/."""
-    tb_root = ckpt_dir / "tb_logs" / "vla_baseline"
+    """Return all TB event files under <ckpt_dir>/tb_logs/<logger>/version_*/."""
+    tb_root = ckpt_dir / "tb_logs"
     if not tb_root.is_dir():
         return []
-    events: list[Path] = []
-    for version_dir in sorted(tb_root.glob("version_*")):
-        events.extend(version_dir.glob("events.out.tfevents.*"))
-    return sorted(events)
+    # Logger names are metadata and may differ in checkpoints from earlier runs.
+    return sorted(path for path in tb_root.rglob("events.out.tfevents.*") if path.is_file())
 
 
 def load_scalar_series(event_files: list[Path], metric: str) -> list[tuple[int, float]]:
@@ -64,9 +62,9 @@ def load_scalar_series(event_files: list[Path], metric: str) -> list[tuple[int, 
 
 
 def find_ckpt_for_step(ckpt_dir: Path, target_step: int) -> Path | None:
-    """Find lewm_step_<N>_object.ckpt with N nearest to target_step."""
+    """Find a step-based object checkpoint, independent of the run's prefix."""
     available: list[tuple[int, Path]] = []
-    for path in ckpt_dir.glob("lewm_step_*_object.ckpt"):
+    for path in sorted(ckpt_dir.glob("*_step_*_object.ckpt")):
         m = CKPT_RE.search(path.name)
         if m:
             available.append((int(m.group(1)), path))
