@@ -76,8 +76,8 @@ NVIDIA GPU; CPU tests and CLI checks can run on macOS. Activate your environment
 before running scripts; they do not assume a particular conda installation.
 
 ```bash
-git clone https://github.com/Li-Youwei/le-wm.git jewam
-cd jewam
+git clone https://github.com/Li-Youwei/JEWAM.git
+cd JEWAM
 conda env create -f environment.yml
 conda activate jewam
 ```
